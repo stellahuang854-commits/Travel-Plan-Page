@@ -3,19 +3,25 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#f3f6f2">
+  <meta name="theme-color" content="#f2eee6">
   <meta name="format-detection" content="telephone=no">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>AI 旅行网页模板</title>
-  <link rel="stylesheet" href="styles.css?v=20260910-3">
-  <link rel="stylesheet" href="ledger.css?v=20260910-2">
+  <link rel="stylesheet" href="styles.css?v=20261030-phase5-1">
+  <link rel="stylesheet" href="ledger.css?v=20261030-phase4-6">
+  <script src="travel-content-store.js?v=20261030-phase3-1" defer></script>
+  <script src="travel-attachment-store.js?v=20261030-phase3-1" defer></script>
+  <script src="travel-content-editor.js?v=20261030-phase3-1" defer></script>
+  <script src="travel-phase3-services.js?v=20261030-phase3-2" defer></script>
+  <script src="cloud-client.js?v=20261030-phase5-1" defer></script>
+  <script src="cloud-migration.js?v=20261030-phase5-1" defer></script>
   <script src="runtime-storage.js?v=20260910-2" defer></script>
   <script src="overview-map.js?v=20260910-2" defer></script>
   <script src="route-ui.js?v=20260910-2" defer></script>
-  <script src="app.js?v=20260910-4" defer></script>
+  <script src="app.js?v=20261030-phase3-3" defer></script>
   <script src="ticket-pdf-preview.js?v=20260910-2" defer></script>
-  <script src="ledger.js?v=20260910-3" defer></script>
+  <script src="ledger.js?v=20261030-phase4-1" defer></script>
   <script src="site-navigation.js?v=20260910-2" defer></script>
 </head>
 <body>
@@ -52,8 +58,7 @@
         </div>
         <p class="section-index" id="flight-index" aria-live="polite">1 / 3</p>
       </div>
-      <div class="flight-carousel" id="flight-carousel" aria-label="航班卡片，可左右滑动"></div>
-      <div class="carousel-dots" id="flight-dots" aria-hidden="true"></div>
+      <div class="flight-carousel" id="flight-carousel" aria-label="去程和返程交通凭证"></div>
     </section>
 
     <section class="section route-section" id="route" aria-labelledby="route-title" data-module="overview" hidden>
@@ -101,9 +106,22 @@
       </div>
       <form class="todo-form" id="todo-form">
         <input id="todo-input" type="text" maxlength="80" placeholder="添加一项准备事项" aria-label="准备事项">
+        <select id="todo-category-select" aria-label="任务分类"></select>
         <button type="submit">添加</button>
       </form>
+      <button class="todo-category-manage" id="todo-category-manage" type="button">管理分类</button>
+      <p class="todo-status" id="todo-status" role="status" aria-live="polite"></p>
       <div class="todo-list" id="todo-list"></div>
+    </section>
+
+    <section class="section travel-content-tools" id="travel-content-tools" hidden aria-labelledby="travel-content-title">
+      <div class="section-heading">
+        <div>
+          <p class="section-kicker">YOUR TRIP NOTES</p>
+          <h2 id="travel-content-title">旅行资料</h2>
+        </div>
+        <button class="travel-content-open" id="travel-content-open" type="button" aria-haspopup="dialog" aria-controls="travel-content-dialog">管理资料</button>
+      </div>
     </section>
 
     <footer class="footer">
@@ -132,11 +150,59 @@
     <div class="ticket-dialog__body" id="ticket-dialog-body"></div>
   </dialog>
 
+  <dialog class="ticket-dialog travel-content-dialog" id="travel-content-dialog" aria-labelledby="travel-content-dialog-title">
+    <header>
+      <div>
+        <span>TRAVEL ARCHIVE</span>
+        <h2 id="travel-content-dialog-title">管理旅行资料</h2>
+      </div>
+      <button type="button" id="travel-content-close" aria-label="关闭旅行资料管理">关闭</button>
+    </header>
+    <div class="ticket-dialog__body">
+      <nav class="travel-content-tabs" aria-label="旅行资料类别">
+        <button type="button" data-travel-tab="accommodations">住宿</button>
+        <button type="button" data-travel-tab="restaurants">餐厅</button>
+        <button type="button" data-travel-tab="transportRecords">交通</button>
+        <button type="button" data-travel-tab="days">每日行程</button>
+        <button type="button" data-travel-tab="todoCategories">To Do 分类</button>
+      </nav>
+      <div id="travel-content-panel" aria-live="polite"></div>
+      <p class="travel-content-status" id="travel-content-status" role="status" aria-live="polite"></p>
+    </div>
+  </dialog>
+
+  <dialog class="ticket-dialog transport-detail-dialog" id="transport-detail-dialog" aria-labelledby="transport-detail-title">
+    <header><div><span>TRAVEL DOCUMENT</span><h2 id="transport-detail-title">交通详情</h2></div><button type="button" id="transport-detail-close" aria-label="关闭交通详情">关闭</button></header>
+    <div class="ticket-dialog__body" id="transport-detail-body"></div>
+  </dialog>
+
+  <dialog class="ticket-dialog connection-dialog" id="connection-dialog" aria-labelledby="connection-dialog-title">
+    <header><div><span>BETWEEN STOPS</span><h2 id="connection-dialog-title">编辑交通衔接</h2></div><button type="button" id="connection-dialog-close" aria-label="关闭交通衔接编辑">关闭</button></header>
+    <div class="ticket-dialog__body">
+      <p class="connection-route-label" id="connection-route-label"></p>
+      <form id="connection-form" class="travel-editor-form">
+        <input type="hidden" name="dayId"><input type="hidden" name="fromItemId"><input type="hidden" name="toItemId"><input type="hidden" name="id"><input type="hidden" name="timeSource" value="manual">
+        <div class="travel-editor-fields">
+          <label class="travel-editor-field"><span>交通方式</span><select name="mode"><option value="walking">Walking · 步行</option><option value="bicycle">Bicycle · 自行车</option><option value="taxi">Taxi / Ride-hailing · 出租车 / 网约车</option><option value="driving">Driving · 自驾</option><option value="metro">Metro · 地铁</option><option value="bus">Bus · 公交车</option><option value="train">Train · 火车</option><option value="ferry">Ferry · 轮渡</option><option value="other">Other · 其他</option></select></label>
+          <label class="travel-editor-field"><span>预计耗时（分钟）</span><input name="estimatedMinutes" type="number" min="1" max="1440" step="1" inputmode="numeric" placeholder="手动填写或稍后估算"></label>
+          <label class="travel-editor-field"><span>距离（选填）</span><input name="distance" type="text" maxlength="60" placeholder="例如 850 m"></label>
+          <label class="travel-editor-field"><span>地图服务</span><select name="mapProvider"><option value="google">Google Maps</option><option value="apple">Apple Maps</option><option value="openstreetmap">OpenStreetMap</option><option value="amap">高德地图 Amap</option></select></label>
+          <label class="travel-editor-field"><span>地图路线链接（选填）</span><input name="routeUrl" type="url" inputmode="url" placeholder="粘贴路线链接"></label>
+          <label class="travel-editor-field"><span>导航链接（选填）</span><input name="navigationUrl" type="url" inputmode="url" placeholder="粘贴导航链接"></label>
+          <label class="travel-editor-field connection-note-field"><span>备注</span><textarea name="note" rows="3" maxlength="500"></textarea></label>
+        </div>
+        <p class="connection-estimate-note">仅点击估算时，OSRM 会收到此段起终点坐标和交通方式。支持道路驾驶、步行、自行车；不含实时交通。耗时是路线估算，不代表行程实际时间。也可不联网手动填写。</p>
+        <div class="connection-actions"><button type="button" id="connection-estimate">使用 OSRM 估算</button><button type="button" id="connection-apply-estimate" hidden>采用路线估算</button><button type="submit">保存衔接</button><button type="button" id="connection-delete" hidden>删除衔接</button></div>
+        <p class="connection-status" role="status" aria-live="polite"></p>
+      </form>
+    </div>
+  </dialog>
+
   <div class="place-map-overlay" id="place-map" hidden>
     <section class="place-map-sheet" role="dialog" aria-modal="true" aria-labelledby="place-map-title">
       <header><h2 id="place-map-title">地点地图</h2><button id="place-map-close" type="button" aria-label="关闭地点地图">关闭</button></header>
-      <iframe id="place-map-frame" title="地点地图" src="about:blank" sandbox="allow-scripts allow-same-origin allow-forms" referrerpolicy="no-referrer-when-downgrade" allowfullscreen></iframe>
-      <footer><p>地图需要能够访问 Google 的网络。若一直空白，请在系统浏览器中打开。</p><a id="place-map-external" target="_blank" rel="noopener noreferrer">用 Google Maps 打开 ↗</a></footer>
+      <div id="place-map-preview"><iframe id="place-map-frame" title="地点地图" src="about:blank" sandbox="allow-scripts allow-same-origin allow-forms" referrerpolicy="no-referrer-when-downgrade" allowfullscreen></iframe><p id="place-map-provider-note" hidden></p></div>
+      <footer><p id="place-map-privacy-note">只有打开地图时，当前地点会发送到你选择的地图服务。</p><a id="place-map-external" target="_blank" rel="noopener noreferrer">打开地图服务 ↗</a></footer>
     </section>
   </div>
 

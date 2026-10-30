@@ -129,6 +129,30 @@ test("D1 is contacted only after an explicit d1 mode selection", async () => {
   }
 });
 
+test("cloud settings use the protected API and revision token instead of private local settings", async () => {
+  const originalFetch = global.fetch;
+  const calls = [];
+  let revision = 3;
+  let settings = { baseCurrency: "EUR" };
+  global.fetch = async (_url, init = {}) => {
+    calls.push(init);
+    if (init.method === "POST") {
+      assert.equal(init.headers["if-match"], '"3"');
+      assert.equal(JSON.parse(init.body).changes[0].collection, "settings");
+      revision += 1;
+      settings = JSON.parse(init.body).changes[0].value;
+    }
+    return { ok: true, async json() { return { version: 1, settings, travelers: [], bills: [], todos: [], tickets: [], revision }; } };
+  };
+  try {
+    const adapter = storageRuntime.createD1Adapter({ tripId: "cloud-trip", collections: ["settings", "travelers", "bills"], storage: createMemoryStorage() });
+    await adapter.load();
+    await adapter.applyChange("settings", { baseCurrency: "CNY" });
+    assert.equal((await adapter.load()).settings.baseCurrency, "CNY");
+    assert.equal(calls[1].method, "POST");
+  } finally { global.fetch = originalFetch; }
+});
+
 test("D1 requires and enforces an explicit collection allowlist", async () => {
   assert.throws(() => storageRuntime.createAdapter({ mode: "d1", tripId: "shared-trip" }), /explicit shared record collection allowlist/);
   const originalFetch = global.fetch;

@@ -5,7 +5,8 @@ const state = {
   expandedDay: null,
   countdownTimer: null,
   purchasedTickets: new Set(),
-  todos: []
+  todos: [],
+  todoCategories: []
 };
 
 const MODULE_NAMES = Object.freeze(["flights", "overview", "itinerary", "todo", "driving", "ledger"]);
@@ -182,14 +183,18 @@ function renderHero() {
   const hero = heroDestinationFor(trip);
   const { destinations } = hero;
   const shortMark = destinations.map((country) => country.code).join(" / ");
-  const year = trip.startDate.slice(0, 4);
+  const startDate = typeof trip.startDate === "string" ? trip.startDate : "";
+  const endDate = typeof trip.endDate === "string" ? trip.endDate : "";
+  const year = startDate.slice(0, 4);
   document.title = state.data.metadata.title;
   $("#trip-title").textContent = hero.title;
   $("#trip-eyebrow").textContent = hero.eyebrow;
-  $("#wordmark").innerHTML = `${escapeHtml(shortMark)} <span>· ${escapeHtml(year)}</span>`;
-  $("#footer-mark").textContent = `${shortMark} · ${year}`;
+  $("#wordmark").innerHTML = `${escapeHtml(shortMark)}${year ? ` <span>· ${escapeHtml(year)}</span>` : ""}`;
+  $("#footer-mark").textContent = [shortMark, year].filter(Boolean).join(" · ");
   $("#route-day-count").textContent = `${trip.dayCount} DAYS`;
-  $("#trip-date").textContent = `${formatCompactDate(trip.startDate)} — ${formatCompactDate(trip.endDate)} · ${trip.dayCount}天`;
+  $("#trip-date").textContent = startDate && endDate
+    ? `${formatCompactDate(startDate)} — ${formatCompactDate(endDate)} · ${trip.dayCount}天`
+    : "日期待补充";
 }
 
 function journeyFlights(journeyId) {
@@ -329,33 +334,204 @@ function flightCard(journey, index) {
 }
 
 function renderFlights() {
-  const journeys = state.data.flightJourneys;
-  $("#flight-carousel").innerHTML = journeys.map(flightCard).join("");
-  $("#flight-dots").innerHTML = journeys.map((_, index) => `<span class="carousel-dot${index === 0 ? " is-active" : ""}"></span>`).join("");
-  $("#flight-index").textContent = `1 / ${journeys.length}`;
+  const journeys = state.data.flightJourneys || [];
+  const customFlights = (window.TravelContentEditor?.getContent()?.transportRecords || []).filter((record) => record.type === "flight" && !record.sourceType);
+  const section = $("#flights");
+  if (section) section.hidden = !moduleEnabled("flights") && !(journeys.length || customFlights.length);
+  const navigationLink = document.querySelector('.travel-navigation-menu [data-module="flights"]');
+  if (navigationLink) navigationLink.hidden = section?.hidden ?? true;
+  const navigation = $("#travel-navigation");
+  if (navigation) navigation.hidden = ![...document.querySelectorAll(".travel-navigation-menu [data-module]")].some((link) => !link.hidden);
+  const customOutbound = customFlights.find((record) => record.direction === "outbound");
+  const customReturn = customFlights.find((record) => record.direction === "return");
+  const outbound = journeys[0] || (customOutbound ? { ...customOutbound, customRecord: customOutbound } : null);
+  const inbound = journeys[1] || (customReturn ? { ...customReturn, customRecord: customReturn } : null);
+  $("#flight-index").hidden = true;
+  $("#flight-carousel").innerHTML = [outbound, inbound].map((journey, index) => miniBoardingPass(journey, index)).join("");
+}
 
-  const carousel = $("#flight-carousel");
-  let scheduled = false;
-  carousel.addEventListener("scroll", () => {
-    if (scheduled) return;
-    scheduled = true;
-    requestAnimationFrame(() => {
-      const cards = $$(".flight-card", carousel);
-      const center = carousel.scrollLeft + carousel.clientWidth / 2;
-      let activeIndex = 0;
-      let distance = Infinity;
-      cards.forEach((card, index) => {
-        const cardCenter = card.offsetLeft + card.offsetWidth / 2;
-        if (Math.abs(cardCenter - center) < distance) {
-          distance = Math.abs(cardCenter - center);
-          activeIndex = index;
-        }
-      });
-      $$(".carousel-dot", $("#flight-dots")).forEach((dot, index) => dot.classList.toggle("is-active", index === activeIndex));
-      $("#flight-index").textContent = `${activeIndex + 1} / ${journeys.length}`;
-      scheduled = false;
-    });
-  }, { passive: true });
+function miniBoardingPass(journey, index) {
+  const direction = index === 0 ? "去程" : "返程";
+  if (!journey) return `<button type="button" class="mini-boarding-pass mini-boarding-pass--empty" data-add-transport="${index === 0 ? "outbound" : "return"}"><span class="mini-boarding-pass__top"><b>${direction}</b><i aria-hidden="true">✳</i></span><span class="mini-boarding-pass__empty">＋ 添加交通信息</span></button>`;
+  if (journey.customRecord) {
+    const record = journey.customRecord;
+    const date = record.date ? formatCompactDate(record.date) : "日期待补充";
+    const routeFrom = record.from || "—";
+    const routeTo = record.to || "—";
+    const times = [record.startTime, record.endTime].filter(Boolean).join(" → ") || "时间待补充";
+    const airline = record.airline || "BOARDING PASS";
+    const flightNo = record.flightNumber || "航班号待补充";
+    return `<button type="button" class="mini-boarding-pass" data-record-detail="${escapeHtml(record.id)}" aria-haspopup="dialog" aria-controls="transport-detail-dialog"><span class="mini-boarding-pass__top"><b>${direction}</b><span>${escapeHtml(airline)}</span><i aria-hidden="true">✳</i></span><span class="mini-boarding-pass__route"><strong>${escapeHtml(routeFrom)}</strong><span aria-hidden="true"></span><strong>${escapeHtml(routeTo)}</strong></span><span class="mini-boarding-pass__meta"><time>${escapeHtml(date)}</time><span>${escapeHtml(times)}</span></span><span class="mini-boarding-pass__flight">${escapeHtml(flightNo)} <span aria-hidden="true">↗</span></span><span class="mini-boarding-pass__status">点击查看详情 / 凭证</span></button>`;
+  }
+  const flights = journeyFlights(journey.id);
+  const first = flights[0];
+  const last = flights.at(-1);
+  const from = first?.departure?.airportCode || "—";
+  const to = last?.arrival?.airportCode || "—";
+  const date = first?.departure?.date ? formatCompactDate(first.departure.date) : "日期待补充";
+  const times = [first?.departure?.time, last?.arrival?.time].filter(Boolean).join(" → ") || "时间待补充";
+  const flightNo = flights.map((flight) => flight.flightNumber).filter(Boolean).join(" · ") || "航班号待补充";
+  const airline = [...new Set(flights.map((flight) => flight.airline?.nameZh || flight.airline?.name).filter(Boolean))].join(" · ");
+  const status = flights.length ? journeyStatusAndTarget(flights) : null;
+  const statusText = !flights.length ? "航班资料待补充" : status.complete ? "已抵达" : preciseCountdownText(status.target, "即将出发");
+  return `<button type="button" class="mini-boarding-pass" data-journey-detail="${escapeHtml(journey.id)}" aria-haspopup="dialog" aria-controls="transport-detail-dialog"><span class="mini-boarding-pass__top"><b>${direction}</b><span>${escapeHtml(airline || "BOARDING PASS")}</span><i aria-hidden="true">✳</i></span><span class="mini-boarding-pass__route"><strong>${escapeHtml(from)}</strong><span aria-hidden="true"></span><strong>${escapeHtml(to)}</strong></span><span class="mini-boarding-pass__meta"><time>${escapeHtml(date)}</time><span>${escapeHtml(times)}</span></span><span class="mini-boarding-pass__flight">${escapeHtml(flightNo)} <span aria-hidden="true">↗</span></span><span class="mini-boarding-pass__status" data-countdown-journey="${escapeHtml(journey.id)}"${flights.length ? "" : " data-placeholder=\"true\""}>${escapeHtml(statusText)}</span></button>`;
+}
+
+function flightDetailLines(journey) {
+  const flights = journeyFlights(journey.id);
+  const first = flights[0] || {};
+  const last = flights.at(-1) || {};
+  const info = window.TravelContentEditor?.getSourceDetails("journey", journey.id) || {};
+  const pieces = [
+    ["出发机场", [first.departure?.airportCode, first.departure?.city, first.departure?.airportName].filter(Boolean).join(" · ")],
+    ["到达机场", [last.arrival?.airportCode, last.arrival?.city, last.arrival?.airportName].filter(Boolean).join(" · ")],
+    ["出发日期", first.departure?.date], ["到达日期", last.arrival?.date],
+    ["出发时间", first.departure?.time], ["到达时间", last.arrival?.time],
+    ["航班号", flights.map((item) => item.flightNumber).filter(Boolean).join(" · ")],
+    ["航站楼", info.terminal || first.departure?.terminal], ["登机口", info.gate || first.departure?.gate],
+    ["登机时间", info.boardingTime], ["座位号", info.seat], ["行李信息", info.baggage], ["乘客信息", info.passenger]
+  ].filter(([, value]) => value);
+  return { info, pieces };
+}
+
+function openTransportDetail({ transportId, sourceType = "record", sourceId = transportId, type = "other", title = "交通详情", transport = null, journey = null, attachmentOnly = false }) {
+  const dialog = $("#transport-detail-dialog");
+  if (!dialog) return;
+  const detail = journey ? flightDetailLines(journey) : { info: transport || {}, pieces: transportDetailLines(transport || {}) };
+  dialog.dataset.transportId = transportId;
+  dialog.dataset.sourceType = sourceType;
+  dialog.dataset.sourceId = sourceId;
+  dialog.dataset.transportType = type;
+  $("#transport-detail-title").textContent = title;
+  const fields = detail.pieces.map(([label, value]) => `<div class="transport-detail-item"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("");
+  const isFlight = type === "flight";
+  const optional = isFlight ? [
+    ["terminal", "航站楼", detail.info.terminal || ""], ["gate", "登机口", detail.info.gate || ""], ["boardingTime", "登机时间", detail.info.boardingTime || "", "time"],
+    ["seat", "座位号", detail.info.seat || ""], ["baggage", "行李信息", detail.info.baggage || ""], ["passenger", "乘客信息", detail.info.passenger || ""], ["note", "备注", detail.info.note || "", "textarea"]
+  ] : [
+    ["arrivalDate", "到达日期", detail.info.arrivalDate || "", "date"], ["serviceNumber", type === "ferry-boat" ? "船次 / 票号" : "车次 / 交通编号", detail.info.serviceNumber || ""],
+    ["seat", "座位号", detail.info.seat || ""], ["baggage", "行李信息", detail.info.baggage || ""], ["passenger", "乘客信息", detail.info.passenger || ""], ["note", "备注", detail.info.note || "", "textarea"]
+  ];
+  const formFields = optional.map(([name, label, value, kind]) => kind === "textarea"
+    ? `<label class="travel-editor-field"><span>${label}</span><textarea name="${name}" rows="2">${escapeHtml(value)}</textarea></label>`
+    : `<label class="travel-editor-field"><span>${label}</span><input name="${name}" type="${kind || "text"}" value="${escapeHtml(value)}"></label>`).join("");
+  $("#transport-detail-body").innerHTML = `<div class="transport-detail-ticket"><div class="transport-detail-summary"><span class="section-kicker">${isFlight ? "FLIGHT DETAILS" : "TRAVEL DETAILS"}</span><dl>${fields || `<p class="ticket-dialog__empty">尚未填写详情。</p>`}</dl></div>${attachmentOnly ? "" : `<form class="transport-detail-form"><h3>补充信息</h3><div class="transport-detail-fields">${formFields}</div><button type="submit">保存详情</button><p class="transport-detail-status" role="status" aria-live="polite"></p></form>`}<section class="transport-attachments"><div class="travel-content-list__heading"><h3>附件与凭证</h3><label class="transport-upload-button">上传 PDF / 图片<input type="file" accept="application/pdf,image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif" multiple></label></div><p class="transport-attachment-hint">保留原始附件；单个文件最大 25 MB。${state.config.persistence.mode === "d1" ? "附件保存在受权限保护的私人云存储。" : "附件只保存在此浏览器的本地存储中。"}</p><div class="transport-attachment-list" aria-live="polite"></div></section></div>`;
+  dialog.showModal();
+  void refreshTransportAttachments(dialog);
+}
+
+function transportDetailLines(record) {
+  const typeLabel = ({ "high-speed-rail": "High-speed rail", train: "Train", metro: "Metro", "bus-coach": "Bus/Coach", "ferry-boat": "Ferry/Boat", "taxi-ride-hailing": "Taxi/Ride-hailing", "rental-car-driving": "Rental car/Driving", walking: "Walking", bicycle: "Bicycle", flight: "Flight", other: "Other" })[record.type] || record.type;
+  return [["交通方式", typeLabel], ["出发地点", record.from], ["到达地点", record.to], ["出发日期", record.date], ["到达日期", record.arrivalDate || record.date], ["出发时间", record.startTime], ["到达时间", record.endTime], ["车次 / 编号", record.serviceNumber], ["座位号", record.seat], ["行李信息", record.baggage], ["乘客信息", record.passenger], ["备注", record.note]].filter(([, value]) => value);
+}
+
+async function refreshTransportAttachments(dialog) {
+  const list = $(".transport-attachment-list", dialog);
+  try {
+    const attachments = await window.TravelAttachmentStore.list(state.data.metadata.tripId, dialog.dataset.transportId);
+    list.innerHTML = attachments.length ? attachments.map((file) => `<article class="transport-attachment" data-attachment-id="${escapeHtml(file.id)}"><div><strong>${escapeHtml(file.name)}</strong><small>${escapeHtml(file.type)} · ${(file.size / 1024 / 1024).toFixed(2)} MB</small></div><div><button type="button" data-attachment-open="${escapeHtml(file.id)}">预览</button><label>替换<input type="file" data-attachment-replace="${escapeHtml(file.id)}" accept="application/pdf,image/*"></label><button type="button" data-attachment-delete="${escapeHtml(file.id)}">删除</button></div></article>`).join("") : `<p class="ticket-dialog__empty">尚未上传凭证。可以添加航空公司、铁路或轮渡提供的原始 PDF / 图片。</p>`;
+  } catch (error) { list.innerHTML = `<p class="transport-detail-status is-error">凭证读取失败：${escapeHtml(error.message || "本地存储不可用")}</p>`; }
+}
+
+function setAttachmentStatus(host, message, error = false) {
+  const status = $(".transport-detail-status", host) || $(".transport-attachment-hint", host);
+  if (!status) return;
+  status.textContent = message;
+  status.classList.toggle("is-error", error);
+}
+
+function setupTransportDetailDialog() {
+  const dialog = $("#transport-detail-dialog");
+  if (!dialog) return;
+  let previewUrls = [];
+  const close = () => { previewUrls.forEach(URL.revokeObjectURL); previewUrls = []; dialog.close(); };
+  $("#transport-detail-close").onclick = close;
+  document.addEventListener("click", (event) => {
+    const journeyButton = event.target.closest("[data-journey-detail]");
+    if (journeyButton) {
+      const journey = state.data.flightJourneys.find((item) => item.id === journeyButton.dataset.journeyDetail);
+      if (journey) openTransportDetail({ transportId: `flight-journey:${journey.id}`, sourceType: "journey", sourceId: journey.id, type: "flight", title: journey.title || (state.data.flightJourneys.indexOf(journey) === 0 ? "去程航班详情" : "返程航班详情"), journey });
+      return;
+    }
+    const recordButton = event.target.closest("[data-record-detail]");
+    if (recordButton) {
+      const record = window.TravelContentEditor?.getContent()?.transportRecords.find((item) => item.id === recordButton.dataset.recordDetail);
+      if (record) openTransportDetail({ transportId: record.id, sourceType: "record", sourceId: record.id, type: record.type, title: record.direction === "return" ? "返程航班详情" : "去程航班详情", transport: record });
+      return;
+    }
+    if (event.target.closest("[data-add-transport]")) { window.TravelContentEditor?.openTab("transportRecords"); return; }
+  });
+  window.addEventListener("travel-transport-detail", (event) => {
+    const record = event.detail;
+    if (!record) return;
+    let journey = null;
+    if (record.sourceType === "journey") journey = state.data.flightJourneys.find((item) => item.id === record.sourceId);
+    if (record.sourceType === "flight") {
+      const flight = state.data.flights.find((item) => item.id === record.sourceId);
+      journey = state.data.flightJourneys.find((item) => item.id === flight?.journeyId);
+    }
+    const flightSource = Boolean(journey || record.sourceType === "flight" || record.type === "flight");
+    const sourceType = flightSource ? "journey" : "record";
+    const sourceId = journey?.id || record.id;
+    const transportId = journey ? `flight-journey:${journey.id}` : record.id;
+    openTransportDetail({ transportId, sourceType, sourceId, type: record.type, title: record.title || record.type, transport: record, journey });
+  });
+  dialog.addEventListener("click", async (event) => {
+    if (event.target === dialog) { close(); return; }
+    const preview = event.target.closest("[data-attachment-open]");
+    const remove = event.target.closest("[data-attachment-delete]");
+    if (remove) {
+      if (!confirm("确定删除这份交通凭证吗？")) return;
+      try { await window.TravelAttachmentStore.remove(state.data.metadata.tripId, remove.dataset.attachmentDelete); await refreshTransportAttachments(dialog); }
+      catch (error) { setAttachmentStatus(dialog, `删除失败：${error.message || "本地存储不可用"}`, true); }
+      return;
+    }
+    if (preview) { await openAttachmentPreview(preview.dataset.attachmentOpen, dialog); }
+  });
+  dialog.addEventListener("change", async (event) => {
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement) || input.type !== "file" || !input.files?.length) return;
+    const status = $(".transport-detail-status", dialog) || $(".transport-attachment-hint", dialog);
+    const replaceId = input.dataset.attachmentReplace;
+    try {
+      const added = await window.TravelAttachmentStore.add(state.data.metadata.tripId, dialog.dataset.transportId, input.files[0]);
+      if (replaceId) await window.TravelAttachmentStore.remove(state.data.metadata.tripId, replaceId);
+      status.textContent = replaceId ? "凭证已替换。" : `已保存 ${input.files.length} 份凭证。`;
+      for (const file of [...input.files].slice(1)) await window.TravelAttachmentStore.add(state.data.metadata.tripId, dialog.dataset.transportId, file);
+      await refreshTransportAttachments(dialog);
+    } catch (error) { status.textContent = `附件保存失败：${error.message || "本地存储空间不足"}`; status.classList.add("is-error"); }
+    finally { input.value = ""; }
+  });
+  dialog.addEventListener("submit", async (event) => {
+    if (!event.target.matches(".transport-detail-form")) return;
+    event.preventDefault();
+    const form = event.target;
+    const details = Object.fromEntries(new FormData(form).entries());
+    const status = $(".transport-detail-status", form);
+    try {
+      const saved = await window.TravelContentEditor.saveSourceDetails(dialog.dataset.sourceType, dialog.dataset.sourceId, details);
+      if (!saved) throw new Error("本地保存失败，请重试。");
+      status.textContent = "交通详情已保存。";
+    } catch (error) { status.textContent = `保存失败：${error.message || "本地存储不可用"}`; status.classList.add("is-error"); }
+  });
+  dialog.addEventListener("close", () => { previewUrls.forEach(URL.revokeObjectURL); previewUrls = []; });
+
+  async function openAttachmentPreview(id, host) {
+    const record = await window.TravelAttachmentStore.get(state.data.metadata.tripId, id);
+    if (!record) { setAttachmentStatus(host, "找不到这份凭证。", true); return; }
+    const url = URL.createObjectURL(record.blob); previewUrls.push(url);
+    const content = record.type === "application/pdf"
+      ? `<iframe class="ticket-dialog__preview ticket-dialog__preview--pdf" src="${url}#toolbar=1" title="${escapeHtml(record.name)}"></iframe><a class="transport-download" href="${url}" download="${escapeHtml(record.name)}">若无法预览，请下载或在新标签页打开</a>`
+      : `<button type="button" class="transport-image-zoom" aria-label="放大查看二维码或凭证"><img class="ticket-dialog__preview" src="${url}" alt="${escapeHtml(record.name)}"></button><a class="transport-download" href="${url}" download="${escapeHtml(record.name)}">下载原始图片</a>`;
+    const view = document.createElement("dialog");
+    view.className = "ticket-dialog attachment-preview-dialog";
+    view.innerHTML = `<header><div><span>ORIGINAL ATTACHMENT</span><h2>${escapeHtml(record.name)}</h2></div><button type="button">关闭</button></header><div class="ticket-dialog__body">${content}</div>`;
+    document.body.append(view);
+    view.querySelector("header button").onclick = () => { view.close(); view.remove(); };
+    view.addEventListener("click", (e) => { if (e.target === view) { view.close(); view.remove(); } });
+    view.showModal();
+    view.querySelector(".transport-image-zoom")?.addEventListener("click", (e) => e.currentTarget.classList.toggle("is-zoomed"));
+  }
 }
 
 function updateFlightCountdowns() {
@@ -363,8 +539,9 @@ function updateFlightCountdowns() {
     const target = $(`[data-countdown-journey="${journey.id}"]`);
     if (!target || target.dataset.placeholder === "true" || journey.placeholder) return;
     const status = journeyStatusAndTarget(journeyFlights(journey.id));
-    $("strong", target).textContent = status.complete ? "已完成" : preciseCountdownText(status.target, "即将出发");
-    $("span", target).textContent = status.label;
+    const countdown = status.complete ? "已完成" : preciseCountdownText(status.target, "即将出发");
+    if (target.classList.contains("mini-boarding-pass__status")) target.textContent = `${status.label} · ${countdown}`;
+    else { $("strong", target).textContent = countdown; $("span", target).textContent = status.label; }
   });
 }
 
@@ -443,27 +620,208 @@ function inlineTicketMarkup(ticket) {
     </div>`;
 }
 
+const CONNECTION_LABELS = Object.freeze({ walking: ["🚶", "步行"], bicycle: ["🚲", "自行车"], taxi: ["🚕", "出租车 / 网约车"], driving: ["🚗", "自驾"], metro: ["🚇", "地铁"], bus: ["🚌", "公交车"], train: ["🚆", "火车"], ferry: ["⛴️", "轮渡"], other: ["⇢", "其他"] });
+
+function scheduleLocation(item) {
+  const place = item.placeId ? state.data.places.find((entry) => entry.id === item.placeId) : null;
+  const label = String(item.location || item.placeName || place?.nameZh || place?.name || "").trim();
+  const rawLatitude = item.locationLatitude === "" || item.locationLatitude === undefined ? place?.geo?.lat : item.locationLatitude;
+  const rawLongitude = item.locationLongitude === "" || item.locationLongitude === undefined ? place?.geo?.lng : item.locationLongitude;
+  const latitude = rawLatitude == null || rawLatitude === "" ? NaN : Number(rawLatitude);
+  const longitude = rawLongitude == null || rawLongitude === "" ? NaN : Number(rawLongitude);
+  const coordinateSystem = item.coordinateSystem || place?.geo?.system;
+  const coordinates = Number.isFinite(latitude) && Number.isFinite(longitude) && Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180 ? { lat: latitude, lng: longitude, ...(coordinateSystem ? { system: coordinateSystem } : {}) } : null;
+  return { placeId: item.placeId || place?.id || "", label, coordinates };
+}
+
+function connectionForPair(day, first, second) {
+  const connection = (window.TravelContentEditor?.getContent()?.connections || []).find((item) => item.dayId === day.id && item.fromItemId === first.id && item.toItemId === second.id);
+  if (!connection) return null;
+  const from = scheduleLocation(first); const to = scheduleLocation(second);
+  const stale = connection.fromPlaceId !== from.placeId || connection.toPlaceId !== to.placeId || connection.fromLabel !== from.label || connection.toLabel !== to.label || JSON.stringify(connection.fromCoordinates || null) !== JSON.stringify(from.coordinates) || JSON.stringify(connection.toCoordinates || null) !== JSON.stringify(to.coordinates);
+  return { ...connection, stale };
+}
+
+function connectionMarkup(day, first, second) {
+  const connection = connectionForPair(day, first, second);
+  if (!connection) return `<li class="timeline-connection"><span aria-hidden="true">↓</span><button type="button" data-connection-edit data-day-id="${escapeHtml(day.id)}" data-from-item="${escapeHtml(first.id)}" data-to-item="${escapeHtml(second.id)}">＋ 添加交通衔接</button></li>`;
+  const [icon, label] = CONNECTION_LABELS[connection.mode] || CONNECTION_LABELS.other;
+  const time = connection.estimatedMinutes ? `预计 ${connection.estimatedMinutes} 分钟` : "耗时待补充";
+  const detail = connection.stale ? "行程顺序或地点已变更，请重新确认这段衔接" : `${connection.distance ? `${connection.distance} · ` : ""}${connection.timeSource === "route" ? "路线估算" : "手动预计"}${connection.note ? ` · ${connection.note}` : ""}`;
+  const routeLink = !connection.stale ? safeMapUrl(connection.routeUrl, connection.mapProvider) : "";
+  const navigationLink = !connection.stale ? safeMapUrl(connection.navigationUrl, connection.mapProvider) || window.TravelPhase3?.directionsUrl(connection) || "" : "";
+  const provider = window.TravelPhase3?.PROVIDERS?.[connection.mapProvider] || "所选地图";
+  const unavailableNote = !connection.stale && connection.mapProvider === "amap" && !navigationLink ? "需 GCJ-02 坐标" : "";
+  return `<li class="timeline-connection${connection.stale ? " is-stale" : ""}"><span aria-hidden="true">↓</span><button type="button" data-connection-edit data-connection-id="${escapeHtml(connection.id)}" data-day-id="${escapeHtml(day.id)}" data-from-item="${escapeHtml(first.id)}" data-to-item="${escapeHtml(second.id)}"><b>${escapeHtml(icon)} ${escapeHtml(label)} · ${escapeHtml(time)}</b><small>${escapeHtml(detail)}</small></button>${routeLink ? `<a href="${escapeHtml(routeLink)}" target="_blank" rel="noopener noreferrer">地图路线 ↗</a>` : ""}${navigationLink ? `<a href="${escapeHtml(navigationLink)}" target="_blank" rel="noopener noreferrer" aria-label="发送此段路线到${escapeHtml(provider)}">${escapeHtml(provider)} 导航 ↗</a>` : unavailableNote ? `<small>${unavailableNote}</small>` : ""}</li>`;
+}
+
+function nonAdjacentConnections(day) {
+  const schedule = day.schedule || [];
+  const connections = window.TravelContentEditor?.getContent()?.connections || [];
+  return connections.filter((connection) => {
+    if (connection.dayId !== day.id) return false;
+    const fromIndex = schedule.findIndex((item) => item.id === connection.fromItemId);
+    const toIndex = schedule.findIndex((item) => item.id === connection.toItemId);
+    return fromIndex >= 0 && toIndex >= 0 && toIndex !== fromIndex + 1;
+  });
+}
+
+function openConnectionEditor(button) {
+  const day = state.data.days.find((item) => item.id === button.dataset.dayId);
+  const first = day?.schedule?.find((item) => item.id === button.dataset.fromItem);
+  const second = day?.schedule?.find((item) => item.id === button.dataset.toItem);
+  if (!day || !first || !second) return;
+  const content = window.TravelContentEditor?.getContent();
+  const connection = content?.connections.find((item) => item.id === button.dataset.connectionId || item.dayId === day.id && item.fromItemId === first.id && item.toItemId === second.id);
+  const from = scheduleLocation(first); const to = scheduleLocation(second);
+  const form = $("#connection-form");
+  form.elements.dayId.value = day.id; form.elements.fromItemId.value = first.id; form.elements.toItemId.value = second.id; form.elements.id.value = connection?.id || "";
+  form.elements.mode.value = connection?.mode || "walking";
+  form.elements.timeSource.value = connection?.timeSource || "manual";
+  form.elements.estimatedMinutes.value = connection?.estimatedMinutes ?? "";
+  form.elements.distance.value = connection?.distance || "";
+  form.elements.note.value = connection?.note || "";
+  form.elements.mapProvider.value = connection?.mapProvider || first.mapProvider || "google";
+  form.elements.routeUrl.value = connection?.routeUrl || "";
+  form.elements.navigationUrl.value = connection?.navigationUrl || "";
+  form.dataset.fromCoordinates = JSON.stringify(from.coordinates);
+  form.dataset.toCoordinates = JSON.stringify(to.coordinates);
+  $("#connection-route-label").textContent = `${from.label || "出发地点待补充"} → ${to.label || "目的地点待补充"}`;
+  $("#connection-delete").hidden = !connection;
+  const status = $("#connection-form .connection-status"); status.textContent = ""; status.classList.remove("is-error");
+  updateConnectionEstimateAvailability(form);
+  $("#connection-apply-estimate").hidden = true;
+  $("#connection-apply-estimate").dataset.result = "";
+  $("#connection-dialog").showModal();
+}
+
+function updateConnectionEstimateAvailability(form) {
+  const button = $("#connection-estimate");
+  let hasCoordinates = false;
+  try { hasCoordinates = Boolean(JSON.parse(form.dataset.fromCoordinates || "null") && JSON.parse(form.dataset.toCoordinates || "null")); } catch { hasCoordinates = false; }
+  const supportedMode = ["walking", "bicycle", "taxi", "driving"].includes(form.elements.mode.value);
+  button.disabled = !hasCoordinates || !supportedMode;
+  button.textContent = !hasCoordinates ? "补充两端坐标后可估算" : supportedMode ? "使用 OSRM 估算" : "此方式请手动填写时间";
+}
+
+function setupConnectionDialog() {
+  const dialog = $("#connection-dialog");
+  if (!dialog) return;
+  $("#connection-dialog-close").onclick = () => dialog.close();
+  $("#connection-estimate").onclick = async () => {
+    const form = $("#connection-form");
+    const status = $("#connection-form .connection-status");
+    const button = $("#connection-estimate");
+    button.disabled = true; status.classList.remove("is-error"); status.textContent = "正在向 OSRM 请求此段路线……";
+    try {
+      const result = await window.TravelPhase3.estimateRoute({ mode: form.elements.mode.value, fromCoordinates: JSON.parse(form.dataset.fromCoordinates || "null"), toCoordinates: JSON.parse(form.dataset.toCoordinates || "null") });
+      const merged = window.TravelPhase3.mergeRouteEstimate({ estimatedMinutes: form.elements.estimatedMinutes.value, distance: form.elements.distance.value.trim(), timeSource: form.elements.timeSource.value }, result);
+      if (!merged.applied) {
+        $("#connection-apply-estimate").dataset.result = JSON.stringify(result);
+        $("#connection-apply-estimate").hidden = false;
+        status.textContent = `OSRM 路线估算：${result.estimatedMinutes} 分钟，${result.distance}。你已有的手动 ${form.elements.estimatedMinutes.value} 分钟已保留；如要替换，请另行点击“采用路线估算”。`;
+      } else {
+        form.elements.estimatedMinutes.value = String(merged.estimatedMinutes);
+        form.elements.distance.value = merged.distance;
+        form.elements.timeSource.value = merged.timeSource;
+        status.textContent = `已填入 OSRM 路线估算：${result.estimatedMinutes} 分钟，${result.distance}。你可继续修改；估算不含实时交通。`;
+      }
+    } catch (error) { status.textContent = error.message || "路线估算失败；可手动填写预计时间。"; status.classList.add("is-error"); }
+    finally { updateConnectionEstimateAvailability(form); }
+  };
+  $("#connection-apply-estimate").onclick = () => {
+    const form = $("#connection-form"); const button = $("#connection-apply-estimate");
+    try {
+      const result = JSON.parse(button.dataset.result);
+      const merged = window.TravelPhase3.mergeRouteEstimate({ estimatedMinutes: form.elements.estimatedMinutes.value, distance: form.elements.distance.value.trim(), timeSource: form.elements.timeSource.value }, result, true);
+      form.elements.estimatedMinutes.value = String(merged.estimatedMinutes);
+      form.elements.distance.value = merged.distance;
+      form.elements.timeSource.value = merged.timeSource;
+      $("#connection-form .connection-status").textContent = `已采用 OSRM 路线估算：${result.estimatedMinutes} 分钟，${result.distance}。`;
+      button.hidden = true;
+    } catch { $("#connection-form .connection-status").textContent = "路线估算结果已失效，请重新估算。"; }
+  };
+  $("#connection-form").elements.estimatedMinutes.addEventListener("input", () => {
+    $("#connection-form").elements.timeSource.value = "manual";
+    $("#connection-apply-estimate").hidden = true;
+  });
+  $("#connection-form").elements.mode.addEventListener("change", () => updateConnectionEstimateAvailability($("#connection-form")));
+  $("#connection-delete").onclick = async () => {
+    const id = $("#connection-form").elements.id.value;
+    if (!id || !confirm("确定删除这段交通衔接吗？")) return;
+    const saved = await window.TravelContentEditor.deleteConnection(id);
+    if (saved) dialog.close();
+    else { const status = $("#connection-form .connection-status"); status.textContent = "删除失败，请稍后重试。"; status.classList.add("is-error"); }
+  };
+  $("#connection-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const day = state.data.days.find((item) => item.id === form.elements.dayId.value);
+    const first = day?.schedule?.find((item) => item.id === form.elements.fromItemId.value);
+    const second = day?.schedule?.find((item) => item.id === form.elements.toItemId.value);
+    const status = $("#connection-form .connection-status");
+    const provider = form.elements.mapProvider.value;
+    if ((form.elements.routeUrl.value && !safeMapUrl(form.elements.routeUrl.value, provider)) || (form.elements.navigationUrl.value && !safeMapUrl(form.elements.navigationUrl.value, provider))) {
+      status.textContent = `路线链接必须来自所选的 ${window.TravelPhase3.PROVIDERS[provider]} 服务。`; status.classList.add("is-error"); return;
+    }
+    if (!day || !first || !second || day.schedule.indexOf(second) !== day.schedule.indexOf(first) + 1) {
+      status.textContent = "这两个项目已不再相邻。请从当前时间线位置重新建立衔接。"; status.classList.add("is-error"); return;
+    }
+    const minutesValue = form.elements.estimatedMinutes.value;
+    const minutes = minutesValue === "" ? null : Number(minutesValue);
+    if (minutes !== null && (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440)) { status.textContent = "预计耗时请输入 1 到 1440 的整数分钟。"; status.classList.add("is-error"); return; }
+    const from = scheduleLocation(first); const to = scheduleLocation(second);
+    const candidate = {
+      id: form.elements.id.value || undefined, dayId: day.id,
+      fromItemId: first.id, toItemId: second.id,
+      fromPlaceId: from.placeId, toPlaceId: to.placeId, fromLabel: from.label, toLabel: to.label,
+      fromCoordinates: from.coordinates, toCoordinates: to.coordinates,
+      mode: form.elements.mode.value, estimatedMinutes: minutes,
+      timeSource: form.elements.timeSource.value || "manual", distance: form.elements.distance.value.trim(), note: form.elements.note.value.trim(),
+      mapProvider: form.elements.mapProvider.value, routeUrl: form.elements.routeUrl.value.trim(), navigationUrl: form.elements.navigationUrl.value.trim(), updatedAt: new Date().toISOString()
+    };
+    const saved = await window.TravelContentEditor.saveConnection(candidate);
+    if (saved) dialog.close();
+    else { status.textContent = "保存失败，交通衔接未更改。请检查本地存储空间后重试。"; status.classList.add("is-error"); }
+  });
+}
+
 function dayCard(day) {
   const today = todayForTrip();
   const isToday = day.date === today;
   const expanded = state.expandedDay === day.day;
-  const schedule = day.schedule.map((item) => {
+  const items = day.schedule || [];
+  const schedule = items.map((item, itemIndex) => {
     const destinations = navigationDestinations(item);
     const mapLinks = destinations.map((destination) => `
-      <button type="button" class="schedule-map-link" data-map-query="${escapeHtml(destination.query)}" data-map-url="${escapeHtml(destination.url || "")}" data-map-label="${escapeHtml(destination.label)}" aria-haspopup="dialog" aria-controls="place-map" aria-label="查看 ${escapeHtml(destination.label)} 的地图">📍 ${escapeHtml(destination.label)}</button>
+      <button type="button" class="schedule-map-link" data-map-query="${escapeHtml(destination.query)}" data-map-url="${escapeHtml(destination.url || "")}" data-map-provider="${escapeHtml(destination.provider || "google")}" data-map-label="${escapeHtml(destination.label)}" aria-haspopup="dialog" aria-controls="place-map" aria-label="查看 ${escapeHtml(destination.label)} 的地图">📍 ${escapeHtml(destination.label)} · ${escapeHtml(window.TravelPhase3?.PROVIDERS?.[destination.provider || "google"] || "Google Maps")}</button>
     `).join("");
     const scheduleTickets = ticketsForSchedule(day, item).map(inlineTicketMarkup).join("");
-    return `
+    const scheduleMarkup = `
       <li class="schedule-item">
-        <span class="schedule-time">${escapeHtml(item.time)}</span>
+          <span class="schedule-time">${escapeHtml(item.time)}${item.endTime ? ` – ${escapeHtml(item.endTime)}` : ""}</span>
         <div class="schedule-content">
           <div class="schedule-text">${escapeHtml(item.text)}</div>
+          ${item.details ? `<p class="detail-note">${escapeHtml(item.details)}</p>` : ""}
+          ${item.note ? `<p class="detail-note">${escapeHtml(item.note)}</p>` : ""}
+          ${(item.documentUrls || []).map((entry) => { const url = safeExternalUrl(typeof entry === "string" ? entry : entry.url); return url ? `<a class="schedule-map-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">查看相关文件 ↗</a>` : ""; }).join("")}
+          <button type="button" class="schedule-map-link" data-schedule-attachments="${escapeHtml(item.id)}" data-day-id="${escapeHtml(day.id)}" aria-haspopup="dialog" aria-controls="transport-detail-dialog">附件 / 预约凭证</button>
           ${scheduleTickets}
           ${mapLinks ? `<div class="schedule-map-links">${mapLinks}</div>` : ""}
         </div>
       </li>
     `;
+    const next = items[itemIndex + 1];
+    return scheduleMarkup + (next ? connectionMarkup(day, item, next) : "");
   }).join("");
+  const staleConnections = nonAdjacentConnections(day);
+  const staleMarkup = staleConnections.map((connection) => `<li class="timeline-connection is-stale"><span aria-hidden="true">!</span><small>一段已保存的交通衔接不再对应相邻项目。<button type="button" data-connection-edit data-connection-id="${escapeHtml(connection.id)}" data-day-id="${escapeHtml(day.id)}" data-from-item="${escapeHtml(connection.fromItemId)}" data-to-item="${escapeHtml(connection.toItemId)}">检查 / 编辑</button></small></li>`).join("");
+  const transportItems = window.TravelContentEditor?.transportsForDay(day.id) || [];
+  const transportSchedule = transportItems.map((item) => `
+    <li class="schedule-item schedule-item--transport">
+      <span class="schedule-time">${escapeHtml(item.time)}</span>
+      <div class="schedule-content"><div class="schedule-text">${escapeHtml(item.text)}</div></div>
+    </li>`).join("");
   const notes = [...(day.notes || []), ...(day.sourceDateLabelConflict ? [day.sourceDateLabelConflict] : [])];
   const costs = (day.costReferences || []).map((cost) => `<span class="cost-tag">${escapeHtml(costText(cost))}</span>`).join("");
   const dayTickets = ticketsForDay(day);
@@ -471,6 +829,10 @@ function dayCard(day) {
   const ticketSummary = dayTickets.length
     ? `<span class="day-ticket-summary ${pendingTicketCount ? "has-pending" : "is-complete"}">${pendingTicketCount ? `${pendingTicketCount} 项待购票` : "门票已准备"}</span>`
     : "";
+  const weatherPlace = (day.schedule || []).map((item) => item.location || item.placeName || state.data.places.find((place) => place.id === item.placeId)?.nameZh || state.data.places.find((place) => place.id === item.placeId)?.name).find(Boolean) || (day.locations || []).find(Boolean) || "地点待补充";
+  const weatherTarget = (day.schedule || []).map((item) => ({ item, place: scheduleLocation(item) })).find(({ place }) => place.label || place.coordinates);
+  const weatherAvailable = Boolean(day.date && (weatherTarget?.place.label || weatherTarget?.place.coordinates || weatherPlace !== "地点待补充"));
+  const weatherPlaceLabel = weatherPlace === "地点待补充" && weatherTarget?.place.coordinates ? `${weatherTarget.place.coordinates.lat}, ${weatherTarget.place.coordinates.lng}` : weatherPlace;
   return `
     <article class="day-card${isToday ? " is-today" : ""}" data-day="${day.day}">
       <span class="day-dot" aria-hidden="true"></span>
@@ -478,13 +840,14 @@ function dayCard(day) {
         <span>
           <span class="day-meta">DAY ${String(day.day).padStart(2, "0")} · ${escapeHtml(formatCompactDate(day.date))}${isToday ? " · 今天" : ""}</span>
           <span class="day-title">${escapeHtml(day.title)}</span>
-          <span class="day-locations">${escapeHtml(day.locations.join(" → "))}</span>
+          <span class="day-locations">${escapeHtml((day.locations || []).join(" → "))}</span>
           ${ticketSummary}
         </span>
         <span class="day-chevron" aria-hidden="true">+</span>
       </button>
       <div class="day-detail" id="day-detail-${day.day}" ${expanded ? "" : "hidden"}>
-        <ol class="schedule">${schedule}</ol>
+        <section class="day-weather" aria-label="每日天气" data-weather-panel="${escapeHtml(day.id)}"><div><strong>${escapeHtml(weatherPlaceLabel)}</strong><small>${escapeHtml(day.date || "日期待补充")}</small></div><button type="button" data-weather-day="${escapeHtml(day.id)}" ${weatherAvailable ? "" : "disabled"}>查询 Open-Meteo 天气</button><p>仅点击查询时发送此日地点和日期给 Open-Meteo；预报范围为未来 16 天。可不联网查看天气。</p><div class="day-weather-result" role="status" aria-live="polite"></div></section>
+        <ol class="schedule">${schedule}${transportSchedule}${staleMarkup}</ol>
         ${costs ? `<div class="costs">${costs}</div>` : ""}
         ${notes.map((note) => `<p class="detail-note">${escapeHtml(note)}</p>`).join("")}
       </div>
@@ -504,11 +867,12 @@ function navigationDestinations(item) {
       id: place.id,
       label: place.nameZh || place.name,
       query: place.navigation?.query || place.googleMapsQuery || place.address || `${place.nameZh || place.name}${place.cityOrArea ? `, ${place.cityOrArea}` : ""}`,
+      provider: item.mapProvider || place.mapProvider || "google",
       directUrl: Boolean(place.navigation?.url || place.googleMapsUrl),
-      url: place.navigation?.url || place.googleMapsUrl || ""
+      url: item.mapProvider && item.mapProvider !== "google" ? window.TravelPhase3?.placeUrl(item.mapProvider, { label: place.nameZh || place.name, query: place.navigation?.query || place.googleMapsQuery || place.address, coordinates: place.geo }) || "" : place.navigation?.url || place.googleMapsUrl || window.TravelPhase3?.placeUrl("google", { label: place.nameZh || place.name, query: place.address || place.nameZh || place.name, coordinates: place.geo }) || ""
     }));
   }
-  const text = String(item.text || item.title || "");
+  const text = [item.text, item.title, item.location, item.placeName].filter(Boolean).join(" ");
   const lowerText = text.toLocaleLowerCase();
   const explicit = (state.data.mapLinks?.navigationPlaces || [])
     .filter((place) => place.matchTerms.some((term) => lowerText.includes(term.toLocaleLowerCase())))
@@ -516,6 +880,8 @@ function navigationDestinations(item) {
       id: place.id,
       label: place.label,
       query: place.query,
+      provider: item.mapProvider || "google",
+      url: window.TravelPhase3?.placeUrl(item.mapProvider || "google", { label: place.label, query: place.query }) || "",
       priority: place.priority || 1,
       matchIndex: Math.max(...place.matchTerms.map((term) => lowerText.lastIndexOf(term.toLocaleLowerCase())))
     }));
@@ -530,6 +896,8 @@ function navigationDestinations(item) {
       id: place.id,
       label: place.nameZh || place.name,
       query: place.googleMapsUrl || [place.name, place.cityOrArea].filter(Boolean).join(", "),
+      provider: item.mapProvider || place.mapProvider || "google",
+      url: window.TravelPhase3?.placeUrl(item.mapProvider || place.mapProvider || "google", { label: place.nameZh || place.name, query: place.address || place.name }) || "",
       directUrl: Boolean(place.googleMapsUrl),
       matchIndex: Math.max(...[place.name, place.nameZh].filter(Boolean).map((name) => lowerText.lastIndexOf(name.toLocaleLowerCase())))
     }));
@@ -540,6 +908,8 @@ function navigationDestinations(item) {
       id: `restaurant-${restaurant.name}`,
       label: restaurant.name,
       query: restaurant.googleMapsUrl || `${restaurant.name}, ${restaurant.city}`,
+      provider: item.mapProvider || "google",
+      url: window.TravelPhase3?.placeUrl(item.mapProvider || "google", { label: restaurant.name, query: `${restaurant.name}, ${restaurant.city || ""}` }) || "",
       directUrl: Boolean(restaurant.googleMapsUrl),
       matchIndex: lowerText.lastIndexOf(restaurant.name.toLocaleLowerCase())
     }));
@@ -551,6 +921,11 @@ function navigationDestinations(item) {
       ? [...catalogPlaces, ...restaurants]
       : [...selectedExplicit, ...restaurants];
   destinations = destinations.filter((place, index, all) => all.findIndex((candidate) => candidate.id === place.id) === index);
+  if (!destinations.length && item.location) {
+    const place = scheduleLocation(item);
+    const provider = item.mapProvider || "google";
+    destinations = [{ id: item.id || item.location, label: item.location, query: item.location, provider, url: window.TravelPhase3?.placeUrl(provider, { label: item.location, query: item.location, coordinates: place.coordinates }) || "", matchIndex: 0 }];
+  }
 
   if (policy.selfNavigationTypes.includes(item.type) && destinations.length > 1 && !specificExplicit.length) {
     destinations.sort((first, second) => second.matchIndex - first.matchIndex);
@@ -567,12 +942,24 @@ function currentTripDay() {
 function renderTimeline() {
   const today = currentTripDay();
   state.expandedDay = today;
-  $("#day-count").textContent = `${state.data.days.length} DAYS`;
-  $("#timeline").innerHTML = state.data.days.map(dayCard).join("");
+  const orderedDays = [...state.data.days].sort((first, second) => String(first.date || "").localeCompare(String(second.date || "")) || (Number(first.day) || 0) - (Number(second.day) || 0));
+  $("#day-count").textContent = `${orderedDays.length} DAYS`;
+  $("#timeline").innerHTML = orderedDays.map(dayCard).join("");
   $("#timeline").onclick = (event) => {
+    const weatherButton = event.target.closest("[data-weather-day]");
+    if (weatherButton) { void queryDayWeather(weatherButton); return; }
+    const connectionButton = event.target.closest("[data-connection-edit]");
+    if (connectionButton) { openConnectionEditor(connectionButton); return; }
     const ticketButton = event.target.closest("[data-ticket-open]");
     if (ticketButton) {
       openTicketDialog(ticketButton.dataset.ticketOpen, ticketButton);
+      return;
+    }
+    const attachmentButton = event.target.closest("[data-schedule-attachments]");
+    if (attachmentButton) {
+      const day = state.data.days.find((item) => item.id === attachmentButton.dataset.dayId);
+      const item = day?.schedule?.find((entry) => entry.id === attachmentButton.dataset.scheduleAttachments);
+      if (item) openTransportDetail({ transportId: `schedule:${item.id}`, sourceType: "schedule", sourceId: item.id, type: "other", title: item.text || item.title || "行程附件", transport: { date: day.date, from: item.location || item.placeName || "", note: item.note || "" }, attachmentOnly: true });
       return;
     }
     const toggle = event.target.closest(".day-toggle");
@@ -598,6 +985,29 @@ function renderTimeline() {
     saveTicketState(checkbox.value, checkbox.checked);
     updateInlineTicketState(checkbox.value, checkbox.checked);
   };
+}
+
+async function queryDayWeather(button) {
+  const day = state.data.days.find((item) => item.id === button.dataset.weatherDay);
+  const panel = button.closest("[data-weather-panel]");
+  const output = $(".day-weather-result", panel);
+  if (!day || !output || !window.TravelPhase3) return;
+  const scheduleTarget = (day.schedule || []).map((item) => ({ item, place: scheduleLocation(item) })).find(({ place }) => place.label || place.coordinates);
+  const coordinates = scheduleTarget?.place.coordinates || null;
+  const location = scheduleTarget?.place.label || (day.locations || []).find(Boolean) || (coordinates ? `${coordinates.lat}, ${coordinates.lng}` : "");
+  button.disabled = true; output.textContent = "正在向 Open-Meteo 请求此日期的天气预报……";
+  try {
+    const result = await window.TravelPhase3.getWeather({ date: day.date, location, coordinates });
+    if (!result.available) {
+      output.textContent = `${result.date || day.date} · ${result.message} 来源：${result.source || "Open-Meteo"}`;
+      return;
+    }
+    const high = Number.isFinite(Number(result.high)) ? `${Math.round(result.high)}°` : "无数据";
+    const low = Number.isFinite(Number(result.low)) ? `${Math.round(result.low)}°` : "无数据";
+    const rain = Number.isFinite(Number(result.rainProbability)) ? `降雨概率 ${Math.round(result.rainProbability)}%` : "降雨概率无数据";
+    output.textContent = `${result.date} · ${result.place || location} · ${result.condition} · ${low}–${high} · ${rain} · 来源 ${result.source} · ${result.note}`;
+  } catch (error) { output.textContent = `天气查询失败：${error.message || "服务暂不可用"}。可稍后重试或不联网手动查看。`; }
+  finally { button.disabled = false; }
 }
 
 function updateInlineTicketState(ticketId, purchased) {
@@ -727,10 +1137,7 @@ function createRuntimeAdapters() {
     ? persistence.sharedCollections
     : ["todos", "tickets", "ledger"]);
   const tripId = state.data.metadata.tripId;
-  const enabledCollections = [
-    ...(moduleEnabled("todo") ? ["todos"] : []),
-    ...(moduleEnabled("itinerary") ? ["tickets"] : [])
-  ];
+  const enabledCollections = ["todos", ...(moduleEnabled("itinerary") ? ["tickets"] : [])];
   const localCollections = enabledCollections.filter((collection) => persistence.mode !== "d1" || !sharedCollections.has(collection));
   const d1Collections = enabledCollections.filter((collection) => persistence.mode === "d1" && sharedCollections.has(collection));
   const localAdapter = localCollections.length ? storage.createAdapter({ mode: "local", tripId, collections: localCollections }) : null;
@@ -760,7 +1167,7 @@ async function loadSharedState() {
   state.todos = Array.isArray(todoSnapshot.todos) ? todoSnapshot.todos : [];
   state.purchasedTickets = new Set((Array.isArray(ticketSnapshot.tickets) ? ticketSnapshot.tickets : []).filter((item) => item.completed).map((item) => item.id));
   const authoredTodos = state.data.preTrip?.todoItems || state.data.preTrip?.packingItems || [];
-  if (todoAdapter?.mode === "local" && !hasLocalTodoSnapshot && !state.todos.length && authoredTodos.length) {
+  if (moduleEnabled("todo") && todoAdapter?.mode === "local" && !hasLocalTodoSnapshot && !state.todos.length && authoredTodos.length) {
     state.todos = authoredTodos.map((item, index) => ({
       id: String(item.id || `todo-initial-${index + 1}`),
       text: String(item.text || item.title || "").trim(),
@@ -776,7 +1183,15 @@ async function saveSharedChange(collection, value, op = "upsert") {
   return adapter.applyChange(collection, value, op);
 }
 
-function saveTodoState() { return Promise.all(state.todos.map((todo) => saveSharedChange("todos", todo))); }
+async function saveTodosBatch(todos) {
+  const adapter = state.runtimeAdapters.todos;
+  if (!adapter) throw new Error("To Do 本地存储未启用。");
+  const snapshot = await adapter.load();
+  snapshot.todos = JSON.parse(JSON.stringify(todos));
+  await adapter.save(snapshot);
+}
+
+function saveTodoState() { return saveTodosBatch(state.todos); }
 
 function renderTodoList() {
   const completed = state.todos.filter((todo) => todo.completed).length;
@@ -788,36 +1203,76 @@ function renderTodoList() {
         <span class="todo-check" aria-hidden="true">✓</span>
         <span class="todo-text">${escapeHtml(todo.text)}</span>
       </label>
+      <small class="todo-category">${escapeHtml(state.todoCategories.find((item) => item.id === todo.categoryId)?.name || "Other")}</small>
+      <div class="todo-actions"><button type="button" class="todo-edit" aria-label="编辑：${escapeHtml(todo.text)}">编辑</button>
       <button type="button" class="todo-delete" aria-label="删除：${escapeHtml(todo.text)}">删除</button>
+      </div>
+      <form class="todo-edit-form" hidden>
+        <input name="text" type="text" maxlength="80" value="${escapeHtml(todo.text)}" aria-label="任务内容">
+        <select name="categoryId" aria-label="任务分类">${state.todoCategories.map((category) => `<option value="${escapeHtml(category.id)}" ${category.id === todo.categoryId ? "selected" : ""}>${escapeHtml(category.name)}</option>`).join("")}</select>
+        <button type="submit">保存</button><button type="button" class="todo-edit-cancel">取消</button>
+      </form>
     </div>`).join("") : `<p class="todo-empty">还没有准备事项，添加第一项吧。</p>`;
 }
 
 function renderTravelPrep() {
   renderTodoList();
-  $("#todo-form").onsubmit = (event) => {
+  $("#todo-category-select").innerHTML = state.todoCategories.map((category) => `<option value="${escapeHtml(category.id)}">${escapeHtml(category.name)}</option>`).join("");
+  $("#todo-category-manage").onclick = () => window.TravelContentEditor?.openTab("todoCategories");
+  const setTodoStatus = (message, error = false) => {
+    const node = $("#todo-status");
+    node.textContent = message;
+    node.classList.toggle("is-error", error);
+  };
+  $("#todo-form").onsubmit = async (event) => {
     event.preventDefault();
     const input = $("#todo-input");
     const text = input.value.trim();
     if (!text) return;
-    state.todos.push({ id: `todo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, text, completed: false });
-    input.value = "";
-    saveSharedChange("todos", state.todos.at(-1)).catch(console.error);
+    const next = [...state.todos, { id: `todo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, text, categoryId: $("#todo-category-select").value || "other", completed: false }];
+    try { await saveTodosBatch(next); state.todos = next; input.value = ""; }
+    catch (error) { setTodoStatus(`任务保存失败，内容仍保留在输入框中：${error.message || "本地存储不可用"}`, true); return; }
+    setTodoStatus("任务已保存。");
     renderTodoList();
   };
-  $("#todo-list").onchange = (event) => {
+  $("#todo-list").onchange = async (event) => {
     const item = event.target.closest("[data-todo-id]");
     if (!item || !event.target.matches("input[type='checkbox']")) return;
-    const todo = state.todos.find((entry) => entry.id === item.dataset.todoId);
-    todo.completed = event.target.checked;
-    saveSharedChange("todos", todo).catch(console.error);
+    const next = state.todos.map((todo) => todo.id === item.dataset.todoId ? { ...todo, completed: event.target.checked } : todo);
+    try { await saveTodosBatch(next); state.todos = next; }
+    catch (error) { event.target.checked = !event.target.checked; setTodoStatus(`完成状态保存失败：${error.message || "本地存储不可用"}`, true); return; }
     renderTodoList();
   };
-  $("#todo-list").onclick = (event) => {
+  $("#todo-list").onsubmit = async (event) => {
+    const form = event.target.closest(".todo-edit-form");
+    if (!form) return;
+    event.preventDefault();
+    const item = form.closest("[data-todo-id]");
+    const values = new FormData(form);
+    const text = String(values.get("text") || "").trim();
+    if (!text) { form.elements.text.focus(); return; }
+    const next = state.todos.map((todo) => todo.id === item.dataset.todoId ? { ...todo, text, categoryId: String(values.get("categoryId") || todo.categoryId) } : todo);
+    try { await saveTodosBatch(next); state.todos = next; renderTodoList(); }
+    catch (error) { setTodoStatus(`任务保存失败：${error.message || "本地存储不可用"}`, true); }
+  };
+  $("#todo-list").onclick = async (event) => {
+    if (event.target.closest(".todo-edit-cancel")) { renderTodoList(); return; }
+    if (event.target.closest(".todo-edit")) {
+      const item = event.target.closest("[data-todo-id]");
+      item.querySelector(".todo-edit-form").hidden = false;
+      item.classList.add("is-editing");
+      item.querySelector(".todo-edit-form input").focus({ preventScroll: true });
+      return;
+    }
     const button = event.target.closest(".todo-delete");
     if (!button) return;
     const item = button.closest("[data-todo-id]");
-    state.todos = state.todos.filter((todo) => todo.id !== item.dataset.todoId);
-    saveSharedChange("todos", { id: item.dataset.todoId }, "delete").catch(console.error);
+    const todo = state.todos.find((entry) => entry.id === item.dataset.todoId);
+    if (!confirm(`确定删除任务“${todo?.text || ""}”吗？`)) return;
+    const next = state.todos.filter((entry) => entry.id !== item.dataset.todoId);
+    try { await saveTodosBatch(next); state.todos = next; }
+    catch (error) { setTodoStatus(`任务删除失败：${error.message || "本地存储不可用"}`, true); return; }
+    setTodoStatus("任务已删除。");
     renderTodoList();
   };
 }
@@ -831,6 +1286,10 @@ function safeExternalUrl(value) {
   } catch {
     return "";
   }
+}
+
+function safeMapUrl(value, provider = "google") {
+  return window.TravelPhase3?.allowedMapUrl(value, provider) ? new URL(value).href : "";
 }
 
 function localAssetUrl(value) {
@@ -872,7 +1331,8 @@ function openTicketDialog(ticketId, opener) {
     <p class="ticket-dialog__status">${escapeHtml(isTicketPurchased(ticket) ? "已标记购票" : ticketRequirement(ticket))}</p>
     ${ticketGuidance(ticket) ? `<p class="ticket-dialog__guidance">${escapeHtml(ticketGuidance(ticket))}</p>` : ""}
     ${preview || (!links ? `<p class="ticket-dialog__empty">当前没有可预览的票据文件或官方链接。</p>` : "")}
-    ${links ? `<div class="ticket-dialog__links">${links}</div>` : ""}`;
+    ${links ? `<div class="ticket-dialog__links">${links}</div>` : ""}
+    <button type="button" class="schedule-map-link" data-ticket-attachments="${escapeHtml(ticket.id)}">管理本地附件 / 二维码</button>`;
   if (typeof dialog.showModal === "function") dialog.showModal();
   else dialog.setAttribute("open", "");
   $("#ticket-dialog-close").focus();
@@ -886,7 +1346,15 @@ function setupTicketDialog() {
     else dialog.removeAttribute("open");
   };
   $("#ticket-dialog-close").onclick = close;
-  dialog.addEventListener("click", (event) => { if (event.target === dialog) close(); });
+  dialog.addEventListener("click", (event) => {
+    const attachmentButton = event.target.closest("[data-ticket-attachments]");
+    if (attachmentButton) {
+      const ticket = state.data.ticketPlanning?.items?.find((item) => item.id === attachmentButton.dataset.ticketAttachments);
+      if (ticket) openTransportDetail({ transportId: `ticket:${ticket.id}`, sourceType: "ticket", sourceId: ticket.id, type: "other", title: ticketTitle(ticket), transport: { type: "other", from: ticketTitle(ticket), date: ticket.date || "", note: ticketGuidance(ticket) }, attachmentOnly: true });
+      return;
+    }
+    if (event.target === dialog) close();
+  });
   dialog.addEventListener("close", () => {
     const body = $("#ticket-dialog-body");
     if (!body.querySelector(".ticket-dialog__preview--pdf")) body.replaceChildren();
@@ -903,6 +1371,8 @@ function setupPlaceMap() {
   const close = () => {
     panel.hidden = true;
     frame.src = "about:blank";
+    frame.hidden = false;
+    $("#place-map-provider-note").hidden = true;
     document.body.style.overflow = previousOverflow;
     opener?.focus();
   };
@@ -912,9 +1382,16 @@ function setupPlaceMap() {
     event.preventDefault();
     opener = link;
     $("#place-map-title").textContent = link.dataset.mapLabel;
-    $("#place-map-external").href = safeExternalUrl(link.dataset.mapUrl) || mapsSearch(link.dataset.mapQuery);
-    frame.title = `${link.dataset.mapLabel} Google Maps`;
-    frame.src = `https://maps.google.com/maps?q=${encodeURIComponent(link.dataset.mapQuery)}&output=embed`;
+    const provider = link.dataset.mapProvider || "google";
+    const providerLabel = window.TravelPhase3?.PROVIDERS?.[provider] || "Google Maps";
+    $("#place-map-external").href = safeMapUrl(link.dataset.mapUrl, provider) || window.TravelPhase3?.placeUrl(provider, { label: link.dataset.mapLabel, query: link.dataset.mapQuery }) || (provider === "google" ? mapsSearch(link.dataset.mapQuery) : "#");
+    $("#place-map-external").textContent = `打开 ${providerLabel} ↗`;
+    frame.title = `${link.dataset.mapLabel} ${providerLabel}`;
+    frame.src = "about:blank";
+    frame.hidden = true;
+    const note = $("#place-map-provider-note");
+    note.hidden = false;
+    note.textContent = `点击下方按钮后，当前地点才会发送给 ${providerLabel}。`;
     previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     panel.hidden = false;
@@ -961,6 +1438,12 @@ async function init() {
     state.data = await response.json();
     state.config = normalizeTripConfig(state.data.config);
     window.TRAVEL_PLAN_CONFIG = state.config;
+    if (state.config.persistence.mode === "d1") {
+      const identityResponse = await fetch(`/api/session?tripId=${encodeURIComponent(state.data.metadata.tripId)}`, { cache: "no-store" });
+      if (!identityResponse.ok) throw new Error(identityResponse.status === 403 || identityResponse.status === 404 ? "当前账号不属于此旅行，无法读取旅行资料。" : "私人访问身份验证失败。");
+      window.TRAVEL_ACCESS = await identityResponse.json();
+      document.documentElement.dataset.tripRole = window.TRAVEL_ACCESS.role;
+    }
     window.TRAVEL_PLAN_DATA = state.data;
     document.dispatchEvent(new CustomEvent("travel-data-ready", { detail: state.data }));
     applyModuleConfig();
@@ -972,16 +1455,46 @@ async function init() {
       setupPlaceMap();
       setupTicketDialog();
     }
-    if (moduleEnabled("todo") || moduleEnabled("itinerary")) {
-      createRuntimeAdapters();
-      try {
-        await loadSharedState();
-      } catch (error) {
-        console.error(`${state.config.persistence.mode === "d1" ? "Shared" : "Local"} runtime data could not be loaded`, error);
-        state.todos = [];
-        state.purchasedTickets = new Set();
+    createRuntimeAdapters();
+    try {
+      await loadSharedState();
+    } catch (error) {
+      console.error(`${state.config.persistence.mode === "d1" ? "Shared" : "Local"} runtime data could not be loaded`, error);
+      state.todos = [];
+      state.purchasedTickets = new Set();
+    }
+    if (window.TravelContentEditor) {
+      const content = await window.TravelContentEditor.init({
+        data: state.data,
+        cloudStorage: state.config.persistence.mode === "d1",
+        enabled: state.config.modules,
+        getTodos: () => state.todos,
+        setTodos: (todos) => { state.todos = todos; },
+        onCategoriesChanged: (categories) => { state.todoCategories = categories; },
+        saveTodos: saveTodosBatch,
+        renderTodos: renderTravelPrep,
+        onDataChanged: () => {
+          if (moduleEnabled("itinerary")) renderTimeline();
+          renderFlights();
+          renderHero();
+        }
+      });
+      setupTransportDetailDialog();
+      setupConnectionDialog();
+      renderFlights();
+      state.todoCategories = content?.todoCategories || window.TravelContentStore.DEFAULT_CATEGORIES.map(([id, name]) => ({ id, name }));
+      const normalizedTodos = window.TravelContentStore.normalizeTodos(state.todos, state.todoCategories);
+      if (normalizedTodos.some((todo, index) => todo.categoryId !== state.todos[index]?.categoryId)) {
+        try { await saveTodosBatch(normalizedTodos); state.todos = normalizedTodos; }
+        catch (error) {
+          console.error("Legacy todo categories could not be saved", error);
+          const node = $("#todo-status");
+          node.textContent = `旧任务分类兼容保存失败：${error.message || "本地存储不可用"}`;
+          node.classList.add("is-error");
+        }
       }
     }
+    renderHero();
     if (moduleEnabled("itinerary")) renderTimeline();
     if (moduleEnabled("driving")) renderRental();
     if (moduleEnabled("todo")) renderTravelPrep();

@@ -1,0 +1,635 @@
+(() => {
+  "use strict";
+
+  const esc = (value = "") => String(value).replace(/[&<>\'"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[c]);
+  const copy = (value) => JSON.parse(JSON.stringify(value));
+  const transportTypes = window.TravelContentStore.TRANSPORT_TYPES.map((id) => [id, ({ "high-speed-rail": "High-speed rail", train: "Train", metro: "Metro", "bus-coach": "Bus/Coach", "ferry-boat": "Ferry/Boat", "taxi-ride-hailing": "Taxi/Ride-hailing", "rental-car-driving": "Rental car/Driving", flight: "Flight", walking: "Walking", bicycle: "Bicycle", other: "Other" })[id]]);
+  let context = null;
+  let content = null;
+  let store = null;
+  let activeTab = "accommodations";
+  let selectedDayId = null;
+  let editing = null;
+  let editingValue = null;
+
+  function status(message, error = false) {
+    const node = document.querySelector("#travel-content-status");
+    if (!node) return;
+    node.textContent = message;
+    node.classList.toggle("is-error", error);
+  }
+
+  function sourceFlights() {
+    const data = context.data;
+    const flights = Array.isArray(data.flights) ? data.flights : [];
+    const journeys = Array.isArray(data.flightJourneys) ? data.flightJourneys : [];
+    return (flights.length ? flights : journeys).map((flight, index) => ({
+      id: String(flight.id || (flight.journeyId ? `${flight.journeyId}-segment-${flight.sequence || index + 1}` : `flight-${index + 1}`)),
+      journeyId: String(flight.journeyId || ""),
+      title: [flight.airline?.nameZh || flight.airline?.name, flight.flightNumber, flight.departure?.city, flight.arrival?.city].filter(Boolean).join(" · ") || `Flight ${index + 1}`,
+      flightNumber: flight.flightNumber || "",
+      date: flight.departure?.date || flight.date || "",
+      from: flight.departure?.city || flight.departure?.airportCode || "",
+      to: flight.arrival?.city || flight.arrival?.airportCode || "",
+      startTime: flight.departure?.time || "",
+      endTime: flight.arrival?.time || ""
+    }));
+  }
+
+  function rentalSource() {
+    const rental = context.data.groundTransport?.rentalCar;
+    if (!rental || typeof rental !== "object") return null;
+    return {
+      id: "rentalCar",
+      title: rental.company || rental.vehicle?.example || "Rental car/Driving",
+      date: rental.pickup?.date || "",
+      from: rental.pickup?.location || rental.pickup?.address || "",
+      to: rental.dropoff?.vehicleReturnPoint || rental.dropoff?.location || "",
+      startTime: rental.pickup?.time || "",
+      endTime: rental.dropoff?.time || ""
+    };
+  }
+
+  function formatTransport(record) {
+    const source = record.sourceType === "flight"
+      ? sourceFlights().find((item) => item.id === record.sourceId)
+      : record.sourceType === "rental" ? rentalSource() : null;
+    const type = transportTypes.find(([id]) => id === record.type)?.[1] || record.type || "Other";
+    const ticketNames = (record.ticketIds || []).map((id) => context.data.ticketPlanning?.items?.find((ticket) => ticket.id === id)?.name || id).filter(Boolean);
+    return [type, source?.title || "", record.date || source?.date, [record.from || source?.from, record.to || source?.to].filter(Boolean).join(" → "), [record.startTime || source?.startTime, record.endTime || source?.endTime].filter(Boolean).join("–"), ticketNames.length ? `门票：${ticketNames.join("、")}` : "", record.note].filter(Boolean);
+  }
+
+  function row(title, detail, id, editLabel = "编辑", showDelete = true) {
+    return `<article class="travel-content-row" data-record-id="${esc(id)}"><div><strong>${esc(title || "未命名资料")}</strong><p>${esc(detail || "尚无详细信息")}</p></div><div class="travel-content-row__actions"><button type="button" data-edit="${esc(id)}">${editLabel}</button>${showDelete ? `<button type="button" class="travel-content-delete" data-delete="${esc(id)}">删除</button>` : ""}</div></article>`;
+  }
+
+  function collectionFor(tab) {
+    return content[tab] || [];
+  }
+
+  function renderList() {
+    const panel = document.querySelector("#travel-content-panel");
+    if (!panel) return;
+    editing = null;
+    if (activeTab === "todoCategories") {
+      panel.innerHTML = `<div class="travel-content-list"><div class="travel-content-list__heading"><h3>To Do 分类</h3><button type="button" data-category-add>新增分类</button></div>${content.todoCategories.map((category) => row(category.name, "可编辑；删除时可将已有任务移动到其他分类。", category.id)).join("") || `<p>还没有分类。</p>`}</div>`;
+      return;
+    }
+    if (activeTab === "days" && selectedDayId) {
+      renderScheduleList(panel);
+      return;
+    }
+    let records = collectionFor(activeTab);
+    let heading = ({ accommodations: "住宿", restaurants: "餐厅", transportRecords: "交通", days: "每日行程" })[activeTab] || "资料";
+    if (activeTab === "transportRecords") records = transportList();
+    const rows = records.map((record) => {
+      const id = record.id;
+      if (activeTab === "transportRecords") { const parts = formatTransport(record); return `<article class="travel-content-row" data-record-id="${esc(id)}"><div><strong>${esc(parts[0] || "交通")}</strong><p>${esc(parts.slice(1).join(" · ") || "尚无详细信息")}</p></div><div class="travel-content-row__actions"><button type="button" data-transport-detail="${esc(id)}">详情 / 凭证</button><button type="button" data-edit="${esc(id)}">${record.linked ? "关联" : "编辑"}</button>${record.linked ? "" : `<button type="button" class="travel-content-delete" data-delete="${esc(id)}">删除</button>`}</div></article>`; }
+      if (activeTab === "days") return `<article class="travel-content-row" data-record-id="${esc(id)}"><div><strong>${esc(record.title || `第 ${record.day || "—"} 天`)}</strong><p>${esc([record.date, (record.locations || []).join(" → "), `${(record.schedule || []).length} 项安排`].filter(Boolean).join(" · "))}</p></div><div class="travel-content-row__actions"><button type="button" data-edit="${esc(id)}">编辑日期</button><button type="button" data-schedule="${esc(id)}">管理安排</button><button type="button" class="travel-content-delete" data-delete="${esc(id)}">删除</button></div></article>`;
+      const title = activeTab === "accommodations" ? record.name : record.name;
+      const detail = activeTab === "accommodations"
+        ? [record.address, record.checkInDate || record.checkIn?.date, record.checkOutDate || record.checkOut?.date].filter(Boolean).join(" · ")
+        : [record.address, record.date, record.reservationTime].filter(Boolean).join(" · ");
+      return row(title, detail, id);
+    }).join("");
+    panel.innerHTML = `<div class="travel-content-list"><div class="travel-content-list__heading"><h3>${heading}</h3><button type="button" data-add>新增</button></div>${rows || `<p>还没有资料。你可以添加自己的内容。</p>`}</div>`;
+  }
+
+  function transportList() {
+    const records = [...content.transportRecords];
+    sourceFlights().forEach((flight) => {
+      const id = `linked-flight-${flight.id}`;
+      if (!records.some((record) => record.sourceType === "flight" && record.sourceId === flight.id)) {
+        records.unshift({ id, type: "flight", sourceType: "flight", sourceId: flight.id, linked: true, ticketIds: [], dayIds: [] });
+      }
+    });
+    const rental = rentalSource();
+    if (rental && !records.some((record) => record.sourceType === "rental" && record.sourceId === "rentalCar")) {
+      records.unshift({ id: "linked-rentalCar", type: "rental-car-driving", sourceType: "rental", sourceId: "rentalCar", linked: true, ticketIds: [], dayIds: [] });
+    }
+    return records;
+  }
+
+  function renderScheduleList(panel) {
+    const day = content.days.find((item) => item.id === selectedDayId);
+    if (!day) { selectedDayId = null; renderList(); return; }
+    const rows = (day.schedule || []).map((item) => row(item.text || item.title, [item.time, item.endTime, item.location || item.placeName, item.note].filter(Boolean).join(" · "), item.id)).join("");
+    panel.innerHTML = `<div class="travel-content-list"><div class="travel-content-list__heading"><h3>${esc(day.title || day.date || "每日安排")}</h3><div><button type="button" data-back-days>返回日期</button><button type="button" data-add>新增安排</button></div></div>${rows || `<p>这一天还没有安排。</p>`}</div>`;
+  }
+
+  function sourceFor(record) {
+    if (record.sourceType === "flight") return sourceFlights().find((item) => item.id === record.sourceId);
+    if (record.sourceType === "rental") return rentalSource();
+    return null;
+  }
+
+  function transportsForDay(dayId) {
+    return transportList().filter((item) => (item.dayIds || []).includes(dayId)).map((item) => ({
+      id: item.id,
+      time: item.startTime || item.date || sourceFor(item)?.startTime || sourceFor(item)?.date || "",
+      text: formatTransport(item).join(" · "),
+      transportId: item.id
+    }));
+  }
+
+  function field(label, name, value = "", type = "text", options = {}) {
+    const attributes = `${options.required ? " required" : ""}${options.maxlength ? ` maxlength="${options.maxlength}"` : ""}${options.inputmode ? ` inputmode="${options.inputmode}"` : ""}${options.step ? ` step="${esc(options.step)}"` : ""}`;
+    return `<label class="travel-editor-field"><span>${esc(label)}</span><input name="${esc(name)}" type="${esc(type)}" value="${esc(value)}"${attributes}></label>`;
+  }
+
+  function textarea(label, name, value = "", hint = "") {
+    return `<label class="travel-editor-field"><span>${esc(label)}</span><textarea name="${esc(name)}" rows="3" placeholder="${esc(hint)}">${esc(value)}</textarea></label>`;
+  }
+
+  function selectField(label, name, options, value = "", multiple = false) {
+    return `<label class="travel-editor-field"><span>${esc(label)}</span><select name="${esc(name)}"${multiple ? " multiple size=\"4\"" : ""}>${multiple ? "" : `<option value="">未关联</option>`}${options.map(([id, label]) => `<option value="${esc(id)}" ${multiple ? "" : id === value ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></label>`;
+  }
+
+  function ticketOptions() {
+    return (context.data.ticketPlanning?.items || []).map((item) => [String(item.id), item.name || item.attraction?.nameZh || item.attraction?.name || item.id]);
+  }
+
+  function dayOptions() { return content.days.map((day) => [day.id, `${day.date || "未设日期"} ${day.title || `第 ${day.day || "—"} 天`}`]); }
+
+  function openForm(kind, record = null) {
+    editing = { kind, id: record?.id || null };
+    editingValue = record ? copy(record) : null;
+    const fields = [];
+    const existing = record || {};
+    let title = "新增资料";
+    if (kind === "accommodations") {
+      title = record ? "编辑住宿" : "新增住宿";
+      fields.push(field("名称", "name", existing.name));
+      fields.push(field("地址", "address", existing.address));
+      fields.push(field("入住日期", "checkInDate", existing.checkInDate || existing.checkIn?.date, "date"));
+      fields.push(field("退房日期", "checkOutDate", existing.checkOutDate || existing.checkOut?.date, "date"));
+      fields.push(field("预订编号", "bookingReference", existing.bookingReference || existing.confirmationNumber));
+      fields.push(field("联系方式", "contact", existing.contact || existing.phone));
+      fields.push(field("预订凭证（链接或文件路径）", "documentUrl", existing.documentUrl || existing.bookingDocument?.url));
+      fields.push(textarea("备注", "notes", existing.notes || existing.note));
+    } else if (kind === "restaurants") {
+      title = record ? "编辑餐厅" : "新增餐厅";
+      fields.push(field("名称", "name", existing.name)); fields.push(field("地址", "address", existing.address));
+      fields.push(field("日期", "date", existing.date, "date")); fields.push(field("预约时间", "reservationTime", existing.reservationTime || existing.time, "time"));
+      fields.push(field("预约人数", "partySize", existing.partySize, "number", { inputmode: "numeric" }));
+      fields.push(field("联系方式", "contact", existing.contact || existing.phone)); fields.push(field("预订链接", "bookingUrl", existing.bookingUrl || existing.url, "url"));
+      fields.push(textarea("备注", "notes", existing.notes || existing.note));
+    } else if (kind === "days") {
+      title = record ? "编辑行程日期" : "新增行程日期";
+      fields.push(field("日期", "date", existing.date, "date")); fields.push(field("标题", "title", existing.title));
+      fields.push(textarea("地点（每行一个）", "locations", (existing.locations || []).join("\n")));
+    } else if (kind === "schedule") {
+      title = record ? "编辑行程安排" : "新增行程安排";
+      fields.push(field("开始时间", "time", existing.time, "time")); fields.push(field("结束时间", "endTime", existing.endTime, "time"));
+      fields.push(field("活动名称", "text", existing.text || existing.title)); fields.push(field("地点", "location", existing.location || existing.placeName));
+      fields.push(selectField("地图地点（可选）", "placeId", (context.data.places || []).map((place) => [place.id, place.nameZh || place.name || place.id]), existing.placeId || ""));
+      fields.push(selectField("地图导航服务", "mapProvider", [["google", "Google Maps"], ["apple", "Apple Maps"], ["openstreetmap", "OpenStreetMap"], ["amap", "高德地图 Amap"]], existing.mapProvider || "google"));
+      fields.push(`<p class="travel-editor-hint">仅点击地图入口时，当前地点会发送到此处选择的服务；不会后台发送或上传其他行程资料。高德路线需要 GCJ-02 坐标。</p>`);
+      fields.push(field("纬度（选填）", "locationLatitude", existing.locationLatitude ?? existing.geo?.lat ?? "", "number"));
+      fields.push(field("经度（选填）", "locationLongitude", existing.locationLongitude ?? existing.geo?.lng ?? "", "number", { step: "any" }));
+      fields[fields.length - 2] = field("纬度（选填）", "locationLatitude", existing.locationLatitude ?? existing.geo?.lat ?? "", "number", { step: "any" });
+      const coordinateSystem = String(existing.coordinateSystem || existing.geo?.system || "wgs84").toLowerCase().replace(/[-_\s]/g, "");
+      fields.push(selectField("坐标系", "coordinateSystem", [["wgs84", "WGS-84"], ["gcj02", "GCJ-02（高德）"]], coordinateSystem === "gcj02" ? "gcj02" : "wgs84"));
+      fields.push(textarea("详细说明", "details", existing.details || existing.description)); fields.push(textarea("备注", "note", existing.note));
+      fields.push(selectField("相关门票", "ticketIds", ticketOptions(), "", true));
+      fields.push(textarea("相关文件链接（每行一个）", "documentUrls", (existing.documentUrls || []).map((item) => typeof item === "string" ? item : item.url).join("\n")));
+      fields.push(selectField("关联交通", "transportIds", transportList().map((item) => [item.id, formatTransport(item).join(" · ")]), "", true));
+    } else if (kind === "transportRecords") {
+      title = record ? "编辑交通" : "新增交通";
+      const linked = Boolean(existing.sourceType);
+      const typeValue = existing.type || "train";
+      fields.push(selectField("交通方式", "type", transportTypes, typeValue));
+      if (typeValue === "flight") {
+        const mode = existing.sourceType === "flight" ? "linked" : "new";
+        fields.push(selectField("航班资料", "flightSourceMode", [["linked", "关联原有航班"], ["new", "新增航班记录"]], existing.flightSourceMode || mode));
+        if ((existing.flightSourceMode || mode) === "linked") {
+          fields.push(selectField("选择原有航班", "sourceId", sourceFlights().map((flight) => [flight.id, flight.title]), existing.sourceId || ""));
+          fields.push(`<p class="travel-editor-hint">关联后沿用原始航班路线与时间，不复制原始航班记录。</p>`);
+        } else {
+          fields.push(selectField("方向", "direction", [["outbound", "去程"], ["return", "返程"]], existing.direction || "outbound"));
+          fields.push(field("航空公司", "airline", existing.airline || ""));
+          fields.push(field("出发机场", "from", existing.from || "")); fields.push(field("到达机场", "to", existing.to || ""));
+          fields.push(field("出发日期", "date", existing.date || "", "date")); fields.push(field("到达日期", "arrivalDate", existing.arrivalDate || existing.date || "", "date"));
+          fields.push(field("出发时间", "startTime", existing.startTime || "", "time")); fields.push(field("到达时间", "endTime", existing.endTime || "", "time"));
+          fields.push(field("航班号", "flightNumber", existing.flightNumber || ""));
+        }
+        fields.push(field("乘客信息（选填）", "passenger", existing.passenger || "")); fields.push(field("座位号", "seat", existing.seat || ""));
+        fields.push(field("行李信息", "baggage", existing.baggage || "")); fields.push(field("航站楼", "terminal", existing.terminal || ""));
+        fields.push(field("登机口", "gate", existing.gate || "")); fields.push(field("登机时间", "boardingTime", existing.boardingTime || "", "time"));
+        fields.push(textarea("备注", "note", existing.note));
+      } else if (typeValue === "rental-car-driving") {
+        fields.push(`<p class="travel-editor-hint">租车详情继续使用原有租车资料；此处只建立每日行程和门票的关联，不复制航班或租车信息。</p>`);
+        fields.push(`<input type="hidden" name="sourceId" value="rentalCar">`);
+      } else {
+        fields.push(field("出发日期", "date", existing.date, "date")); fields.push(field("到达日期", "arrivalDate", existing.arrivalDate || existing.date, "date"));
+        fields.push(field("出发地点", "from", existing.from)); fields.push(field("到达地点", "to", existing.to));
+        fields.push(field("出发时间", "startTime", existing.startTime, "time")); fields.push(field("到达时间", "endTime", existing.endTime, "time"));
+        fields.push(field("车次 / 票号", "serviceNumber", existing.serviceNumber || existing.flightNumber || ""));
+        fields.push(field("乘客信息（选填）", "passenger", existing.passenger || ""));
+        fields.push(field("座位号", "seat", existing.seat || ""));
+        fields.push(field("行李信息", "baggage", existing.baggage || ""));
+      }
+      fields.push(selectField("关联每日行程", "dayIds", dayOptions(), "", true));
+      fields.push(selectField("相关门票", "ticketIds", ticketOptions(), "", true)); fields.push(textarea("备注", "note", existing.note));
+      if (linked) fields.push(`<p class="travel-editor-hint">关联的原始航班或租车资料不会被复制或覆盖。</p>`);
+    }
+    const panel = document.querySelector("#travel-content-panel");
+    panel.innerHTML = `<form class="travel-editor-form" data-editor-form="${esc(kind)}"><div class="travel-content-list__heading"><h3>${title}</h3><button type="button" data-cancel-form>返回</button></div><div class="travel-editor-fields">${fields.join("")}</div><div class="travel-editor-actions"><button type="submit">保存</button><button type="button" data-cancel-form>取消</button></div></form>`;
+    if (record && kind === "schedule") {
+      const form = panel.querySelector("form");
+      setMulti(form.elements.ticketIds, existing.ticketIds || []);
+      setMulti(form.elements.transportIds, existing.transportIds || []);
+    }
+    if (record && kind === "transportRecords") {
+      const form = panel.querySelector("form");
+      setMulti(form.elements.dayIds, existing.dayIds || []); setMulti(form.elements.ticketIds, existing.ticketIds || []);
+    }
+    panel.querySelector("input,select,textarea")?.focus({ preventScroll: true });
+  }
+
+  function setMulti(select, values) { if (select) [...select.options].forEach((option) => { option.selected = values.includes(option.value); }); }
+  function selectedValues(select) { return select ? [...select.selectedOptions].map((option) => option.value) : []; }
+
+  async function commit(mutator, successMessage) {
+    try {
+      const candidate = copy(content);
+      mutator(candidate);
+      const saved = await store.save(candidate);
+      const categoriesChanged = JSON.stringify(content.todoCategories) !== JSON.stringify(saved.todoCategories);
+      content = saved;
+      applyToPage();
+      if (categoriesChanged) { context.onCategoriesChanged?.(copy(content.todoCategories)); context.renderTodos?.(); }
+      status(successMessage);
+      return true;
+    } catch (error) {
+      status(error.message || "保存失败，请重试。", true);
+      return false;
+    }
+  }
+
+  function applyToPage() {
+    context.data.accommodations = copy(content.accommodations);
+    context.data.restaurants = copy(content.restaurants);
+    context.data.days = copy(content.days);
+    if (context.data.trip) {
+      const dates = content.days.map((day) => day.date).filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)).sort();
+      context.data.trip.dayCount = content.days.length;
+      context.data.trip.startDate = dates[0] || null;
+      context.data.trip.endDate = dates.at(-1) || null;
+    }
+    context.onDataChanged?.(context.data);
+  }
+
+  function idFor(prefix) { return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`; }
+
+  async function saveForm(form) {
+    const kind = form.dataset.editorForm;
+    const data = new FormData(form);
+    const current = editing?.id ? (editingValue || content[kind === "schedule" ? "days" : kind].flatMap((item) => kind === "schedule" ? item.schedule || [] : [item]).find((item) => item.id === editing.id)) : null;
+    const record = { ...(current || {}), id: current?.id || idFor(kind === "accommodations" ? "stay" : kind === "restaurants" ? "restaurant" : kind === "days" ? "day" : kind === "schedule" ? "item" : "transport") };
+    for (const [key, value] of data.entries()) {
+      if (["ticketIds", "transportIds", "dayIds"].includes(key)) continue;
+      if (key === "locations" || key === "documentUrls") record[key] = String(value).split("\n").map((item) => item.trim()).filter(Boolean);
+      else if (key === "partySize") record[key] = value ? Number(value) : "";
+      else if (key === "locationLatitude" || key === "locationLongitude") record[key] = value === "" ? "" : Number(value);
+      else if (key === "sourceId") record.sourceId = String(value);
+      else record[key] = String(value).trim();
+    }
+    if (form.elements.ticketIds) record.ticketIds = selectedValues(form.elements.ticketIds);
+    if (form.elements.transportIds) record.transportIds = selectedValues(form.elements.transportIds);
+    if (form.elements.dayIds) record.dayIds = selectedValues(form.elements.dayIds);
+    if (kind === "transportRecords") {
+      record.type = String(data.get("type") || "other");
+      if (record.type === "flight" && String(data.get("flightSourceMode")) === "linked") {
+        record.sourceType = "flight";
+        if (!sourceFlights().some((flight) => flight.id === record.sourceId)) { status("请选择可关联的原有航班，或改为新增航班记录。", true); return; }
+        delete record.flightSourceMode; delete record.direction; delete record.date; delete record.arrivalDate; delete record.from; delete record.to; delete record.startTime; delete record.endTime; delete record.flightNumber; delete record.airline;
+      } else if (record.type === "flight") {
+        delete record.sourceType; delete record.sourceId; delete record.flightSourceMode;
+        const duplicateSource = sourceFlights().some((flight) => flight.flightNumber && record.flightNumber && flight.flightNumber.toLocaleLowerCase() === record.flightNumber.toLocaleLowerCase() && flight.date && flight.date === record.date);
+        const duplicateCustom = content.transportRecords.some((item) => item.id !== record.id && item.type === "flight" && !item.sourceType && item.flightNumber && record.flightNumber && item.flightNumber.toLocaleLowerCase() === record.flightNumber.toLocaleLowerCase() && item.date === record.date);
+        if (duplicateSource || duplicateCustom) { status("已存在相同日期和航班号的记录，请关联原航班或编辑已有记录。", true); return; }
+      }
+      else if (record.type === "rental-car-driving") {
+        record.sourceType = "rental";
+        if (!rentalSource()) { status("没有可关联的原有租车资料；此处不会创建重复租车记录。", true); return; }
+        delete record.date; delete record.from; delete record.to; delete record.startTime; delete record.endTime;
+      }
+      else { delete record.sourceType; delete record.sourceId; }
+      if (record.sourceType) {
+        const duplicate = content.transportRecords.find((item) => item.sourceType === record.sourceType && item.sourceId === record.sourceId);
+        if (duplicate) record.id = duplicate.id;
+      }
+    }
+    if (kind === "schedule") { record.type = record.type || "activity"; record.title = record.text; }
+    if (kind === "days") {
+      record.schedule = Array.isArray(record.schedule) ? record.schedule : [];
+      record.locations = Array.isArray(record.locations) ? record.locations : [];
+      if (!record.day) record.day = Math.max(0, ...content.days.map((day) => Number(day.day) || 0)) + 1;
+    }
+    const ok = await commit((next) => {
+      if (kind === "schedule") {
+        const day = next.days.find((item) => item.id === selectedDayId);
+        if (!day) throw new Error("找不到对应日期。");
+        day.schedule = Array.isArray(day.schedule) ? day.schedule : [];
+        const index = day.schedule.findIndex((item) => item.id === record.id);
+        const oldTransportIds = index >= 0 ? day.schedule[index].transportIds || [] : [];
+        if (index >= 0) day.schedule[index] = record; else day.schedule.push(record);
+        const linked = new Set([...oldTransportIds, ...(record.transportIds || [])]);
+        linked.forEach((transportId) => {
+          let transport = next.transportRecords.find((item) => item.id === transportId);
+          if (!transport) {
+            const source = transportList().find((item) => item.id === transportId);
+            if (source?.sourceType) {
+              transport = { id: source.id, type: source.type, sourceType: source.sourceType, sourceId: source.sourceId, ticketIds: [], dayIds: [] };
+              next.transportRecords.push(transport);
+            }
+          }
+          if (!transport) return;
+          const days = new Set(transport.dayIds || []);
+          if ((record.transportIds || []).includes(transportId)) days.add(selectedDayId); else days.delete(selectedDayId);
+          transport.dayIds = [...days];
+        });
+      } else {
+        const list = next[kind];
+        const index = list.findIndex((item) => item.id === record.id);
+        if (index >= 0) list[index] = { ...list[index], ...record }; else list.push(record);
+      }
+    }, "资料已保存。");
+    if (ok) { status("资料已保存。"); renderList(); }
+  }
+
+  async function deleteRecord(id) {
+    const collection = activeTab;
+    if (collection === "days" && selectedDayId) {
+      const day = content.days.find((item) => item.id === selectedDayId);
+      const scheduleItem = day?.schedule?.find((item) => item.id === id);
+      if (!scheduleItem) return;
+      const linkedTickets = (context.data.ticketPlanning?.items || []).filter((ticket) =>
+        (scheduleItem.ticketIds || []).includes(ticket.id) || (ticket.scheduleItemIds || ticket.itemIds || []).includes(scheduleItem.id)
+      );
+      if (linkedTickets.length) { status("此安排关联着门票。请先在安排编辑中移除或重新关联门票，再删除。", true); return; }
+      let attachmentCount = 0;
+      if (window.TravelAttachmentStore) {
+        try { attachmentCount = (await window.TravelAttachmentStore.list(context.data.metadata.tripId, `schedule:${id}`)).length; }
+        catch (error) { status(`无法检查该行程的附件，已取消删除：${error.message || "本地存储不可用"}`, true); return; }
+      }
+      if (!window.confirm(`确定删除这项行程安排吗？${attachmentCount ? `同时删除关联的 ${attachmentCount} 个本地附件。` : ""}`)) return;
+      const saved = await commit((next) => {
+        const targetDay = next.days.find((item) => item.id === selectedDayId);
+        if (targetDay) targetDay.schedule = targetDay.schedule.filter((item) => item.id !== id);
+        next.connections = next.connections.filter((item) => item.fromItemId !== id && item.toItemId !== id);
+        const detached = new Set(scheduleItem.transportIds || []);
+        detached.forEach((transportId) => {
+          const stillLinked = targetDay?.schedule.some((item) => (item.transportIds || []).includes(transportId));
+          if (!stillLinked) {
+            const transport = next.transportRecords.find((item) => item.id === transportId);
+            if (transport) transport.dayIds = (transport.dayIds || []).filter((dayId) => dayId !== selectedDayId);
+          }
+        });
+      }, "行程安排已删除。");
+      if (saved && window.TravelAttachmentStore) {
+        try { await window.TravelAttachmentStore.removeAll(context.data.metadata.tripId, `schedule:${id}`); }
+        catch (error) { status(`行程已删除，但附件清理失败：${error.message || "本地存储不可用"}`, true); }
+      }
+      renderList();
+      return;
+    }
+    const record = content[collection]?.find((item) => item.id === id);
+    if (collection === "todoCategories") return deleteCategory(record);
+    if (collection === "transportRecords") {
+      const linked = record?.sourceType;
+      const question = linked ? "删除这条航班/租车关联？原始航班和租车资料会保留。" : "确定删除这条交通记录吗？";
+      if (!window.confirm(question)) return;
+    } else if (collection === "days") {
+      const day = record;
+      const ticketRefs = (context.data.ticketPlanning?.items || []).filter((ticket) => ticket.dayId === day?.id || ticket.day === day?.day);
+      if (ticketRefs.length) { status("这一天关联着门票。请先在门票资料中重新关联，再删除日期。", true); return; }
+      let attachmentCount = 0;
+      if (window.TravelAttachmentStore) {
+        try { for (const item of day?.schedule || []) attachmentCount += (await window.TravelAttachmentStore.list(context.data.metadata.tripId, `schedule:${item.id}`)).length; }
+        catch (error) { status(`无法检查该日期的附件，已取消删除：${error.message || "本地存储不可用"}`, true); return; }
+      }
+      if (!window.confirm(`确定删除这一天及其行程安排吗？${attachmentCount ? `同时删除关联的 ${attachmentCount} 个本地附件。` : ""}`)) return;
+    } else if (!window.confirm("确定删除这条资料吗？")) return;
+    const saved = await commit((next) => {
+      if (collection === "days" && selectedDayId === id) selectedDayId = null;
+      next[collection] = next[collection].filter((item) => item.id !== id);
+      if (collection === "days") {
+        next.transportRecords.forEach((item) => { item.dayIds = (item.dayIds || []).filter((dayId) => dayId !== id); });
+        next.connections = next.connections.filter((item) => item.dayId !== id);
+      }
+      if (collection === "transportRecords") next.days.forEach((day) => (day.schedule || []).forEach((item) => { item.transportIds = (item.transportIds || []).filter((transportId) => transportId !== id); }));
+    }, "资料已删除。");
+    if (saved && collection === "days" && window.TravelAttachmentStore) {
+      try {
+        for (const item of record?.schedule || []) await window.TravelAttachmentStore.removeAll(context.data.metadata.tripId, `schedule:${item.id}`);
+      } catch (error) { status(`日期已删除，但部分行程附件清理失败：${error.message || "本地存储不可用"}`, true); }
+    }
+    renderList();
+  }
+
+  function openDialog(tab = "accommodations") {
+    activeTab = tab;
+    selectedDayId = null;
+    document.querySelector("#travel-content-dialog")?.showModal();
+    renderTabs(); renderList();
+  }
+
+  function renderTabs() {
+    document.querySelectorAll("[data-travel-tab]").forEach((button) => {
+      button.setAttribute("aria-pressed", String(button.dataset.travelTab === activeTab));
+    });
+  }
+
+  function handleClick(event) {
+    const tab = event.target.closest("[data-travel-tab]");
+    if (tab) { activeTab = tab.dataset.travelTab; selectedDayId = null; renderTabs(); renderList(); return; }
+    if (event.target.closest("#travel-content-open")) { openDialog(); return; }
+    if (event.target.closest("#travel-content-close")) { document.querySelector("#travel-content-dialog")?.close(); return; }
+    if (event.target.closest("[data-back-days]")) { selectedDayId = null; renderList(); return; }
+    if (event.target.closest("[data-category-add]")) { openCategoryForm(); return; }
+    const add = event.target.closest("[data-add]");
+    if (add) {
+      if (activeTab === "days" && selectedDayId) openForm("schedule");
+      else if (activeTab === "days") openForm("days");
+      else if (activeTab === "accommodations" || activeTab === "restaurants" || activeTab === "transportRecords") openForm(activeTab);
+      return;
+    }
+    const schedule = event.target.closest("[data-schedule]");
+    if (schedule) { selectedDayId = schedule.dataset.schedule; renderList(); return; }
+    if (event.target.closest("[data-cancel-form]")) { renderList(); return; }
+    const edit = event.target.closest("[data-edit]");
+    if (edit) {
+      const id = edit.dataset.edit;
+      if (activeTab === "todoCategories") { openCategoryForm(content.todoCategories.find((item) => item.id === id)); return; }
+      if (activeTab === "transportRecords") openForm(activeTab, transportList().find((item) => item.id === id));
+      else if (activeTab === "days" && selectedDayId) openForm("schedule", content.days.find((day) => day.id === selectedDayId)?.schedule?.find((item) => item.id === id));
+      else openForm(activeTab, content[activeTab].find((item) => item.id === id));
+      return;
+    }
+    const transportDetail = event.target.closest("[data-transport-detail]");
+    if (transportDetail) {
+      const record = transportList().find((item) => item.id === transportDetail.dataset.transportDetail);
+      if (record) window.dispatchEvent(new CustomEvent("travel-transport-detail", { detail: copy(record) }));
+      return;
+    }
+    const remove = event.target.closest("[data-delete]");
+    if (remove) { void deleteRecord(remove.dataset.delete); return; }
+  }
+
+  function handleSubmit(event) {
+    const form = event.target.closest("[data-editor-form]");
+    if (form) { event.preventDefault(); void saveForm(form); return; }
+    const categoryForm = event.target.closest("[data-category-form]");
+    if (categoryForm) { event.preventDefault(); void saveCategoryForm(categoryForm); }
+    const moveForm = event.target.closest("[data-category-move]");
+    if (moveForm) { event.preventDefault(); void moveCategoryTasks(moveForm); }
+  }
+
+  function handleChange(event) {
+    if (!["type", "flightSourceMode"].includes(event.target.name) || !event.target.closest('[data-editor-form="transportRecords"]')) return;
+    const form = event.target.form;
+    const values = new FormData(form);
+    const draft = { ...(editingValue || {}), type: event.target.value };
+    for (const [key, value] of values.entries()) {
+      if (["dayIds", "ticketIds"].includes(key)) continue;
+      draft[key] = value;
+    }
+    draft.dayIds = selectedValues(form.elements.dayIds);
+    draft.ticketIds = selectedValues(form.elements.ticketIds);
+    openForm("transportRecords", draft);
+  }
+
+  function openCategoryForm(category = null) {
+    editing = { kind: "todoCategories", id: category?.id || null };
+    editingValue = category ? copy(category) : null;
+    document.querySelector("#travel-content-panel").innerHTML = `<form class="travel-editor-form" data-category-form><div class="travel-content-list__heading"><h3>${category ? "编辑分类" : "新增分类"}</h3><button type="button" data-cancel-form>返回</button></div><div class="travel-editor-fields">${field("分类名称", "name", category?.name || "", "text", { maxlength: 40 })}</div><div class="travel-editor-actions"><button type="submit">保存</button><button type="button" data-cancel-form>取消</button></div></form>`;
+    document.querySelector("#travel-content-panel input")?.focus({ preventScroll: true });
+  }
+
+  function openCategoryMoveForm(category, count) {
+    const targets = content.todoCategories.filter((item) => item.id !== category.id);
+    if (!targets.length) { status("请先新增另一个分类，再删除此分类。", true); return; }
+    document.querySelector("#travel-content-panel").innerHTML = `<form class="travel-editor-form" data-category-move="${esc(category.id)}"><div class="travel-content-list__heading"><h3>移动分类中的任务</h3><button type="button" data-cancel-form>返回</button></div><p>“${esc(category.name)}”中有 ${count} 项任务。选择目标分类后删除该分类，任务内容和完成状态会保留。</p>${selectField("移动到", "targetId", targets.map((item) => [item.id, item.name]))}<div class="travel-editor-actions"><button type="submit">移动任务并删除分类</button><button type="button" data-cancel-form>取消</button></div></form>`;
+  }
+
+  async function moveCategoryTasks(form) {
+    const categoryId = form.dataset.categoryMove;
+    const targetId = String(new FormData(form).get("targetId") || "");
+    if (!targetId || targetId === categoryId) { status("请选择有效的目标分类。", true); return; }
+    let updatedTodos;
+    try { updatedTodos = window.TravelContentStore.moveTasksBeforeCategoryDelete(context.getTodos(), content.todoCategories, categoryId, targetId); }
+    catch (error) { status(error.message, true); return; }
+    try { await context.saveTodos(updatedTodos); context.setTodos(updatedTodos); }
+    catch (error) { status(`任务保存失败，任务和分类都未删除：${error.message || "本地保存失败"}`, true); return; }
+    const ok = await commit((next) => { next.todoCategories = next.todoCategories.filter((item) => item.id !== categoryId); }, "分类已删除，任务已移动并保留。");
+    if (ok) { context.renderTodos(); renderList(); }
+  }
+
+  async function saveCategoryForm(form) {
+    const name = String(new FormData(form).get("name") || "").trim();
+    if (!name) { status("请输入分类名称。", true); form.elements.name?.focus(); return; }
+    const old = editingValue;
+    const id = old?.id || `category-${idFor("custom").replace(/[^a-zA-Z0-9_-]/g, "")}`;
+    const ok = await commit((next) => {
+      const collision = next.todoCategories.some((item) => item.id !== id && item.name.toLocaleLowerCase() === name.toLocaleLowerCase());
+      if (collision) throw new Error("已有同名分类。");
+      const index = next.todoCategories.findIndex((item) => item.id === id);
+      if (index >= 0) next.todoCategories[index] = { ...next.todoCategories[index], name };
+      else next.todoCategories.push({ id, name });
+    }, "分类已保存。");
+    if (ok) { context.renderTodos?.(); renderList(); }
+  }
+
+  async function deleteCategory(category) {
+    if (!category) return;
+    const usedBy = context.getTodos().filter((todo) => todo.categoryId === category.id);
+    if (usedBy.length) {
+      openCategoryMoveForm(category, usedBy.length);
+      return;
+    } else {
+      if (content.todoCategories.length <= 1) { status("至少需要保留一个分类。", true); return; }
+      if (!window.confirm(`确定删除“${category.name}”分类吗？`)) return;
+    }
+    const ok = await commit((next) => { next.todoCategories = next.todoCategories.filter((item) => item.id !== category.id); }, "分类已删除，任务已保留。");
+    if (ok) { context.renderTodos(); renderList(); }
+  }
+
+  async function init(options) {
+    context = options;
+    store = options.cloudStorage
+      ? window.TravelContentStore.createCloudStore(options.data.metadata.tripId, options.data.config.persistence.apiBase || "/api/trip")
+      : window.TravelContentStore.createStore(options.data.metadata.tripId);
+    try {
+      content = await store.load(options.data);
+      applyToPage();
+      window.TRAVEL_CONTENT = content;
+      const section = document.querySelector("#travel-content-tools");
+      section.hidden = false;
+      document.addEventListener("click", handleClick);
+      document.addEventListener("submit", handleSubmit);
+      document.querySelector("#travel-content-panel")?.addEventListener("change", handleChange);
+      return content;
+    } catch (error) {
+      const section = document.querySelector("#travel-content-tools");
+      section.hidden = false;
+      status(error.message || "旅行资料载入失败。", true);
+      return null;
+    }
+  }
+
+  function openTab(tab) { openDialog(tab); }
+  function getContent() { return content ? copy(content) : null; }
+
+  function getSourceDetails(sourceType, sourceId) {
+    const direct = content?.transportRecords.find((item) => item.sourceType === sourceType && item.sourceId === sourceId);
+    if (direct) return copy(direct);
+    if (sourceType === "journey") {
+      const flightIds = new Set(sourceFlights().filter((flight) => flight.journeyId === sourceId).map((flight) => flight.id));
+      const linked = content?.transportRecords.find((item) => item.sourceType === "flight" && flightIds.has(item.sourceId));
+      if (linked) return copy(linked);
+    }
+    return {};
+  }
+
+  async function saveSourceDetails(sourceType, sourceId, details) {
+    if (sourceType === "record") {
+      const ok = await commit((next) => {
+        const item = next.transportRecords.find((record) => record.id === sourceId);
+        if (!item) throw new Error("找不到这条交通记录。");
+        Object.assign(item, copy(details));
+      }, "交通详情已保存。");
+      return ok;
+    }
+    const current = content?.transportRecords.find((item) => item.sourceType === sourceType && item.sourceId === sourceId);
+    const id = current?.id || `${sourceType}-${sourceId}`;
+    const ok = await commit((next) => {
+      const index = next.transportRecords.findIndex((item) => item.sourceType === sourceType && item.sourceId === sourceId);
+      const record = { ...(index >= 0 ? next.transportRecords[index] : {}), ...copy(details), id, type: sourceType === "journey" || sourceType === "flight" ? "flight" : sourceType === "rental" ? "rental-car-driving" : details.type || "other", sourceType, sourceId };
+      if (index >= 0) next.transportRecords[index] = record; else next.transportRecords.push(record);
+    }, "交通详情已保存。");
+    return ok;
+  }
+
+  async function saveConnection(value) {
+    const existing = content.connections.find((item) => item.fromItemId === value.fromItemId && item.toItemId === value.toItemId);
+    const id = value.id || existing?.id || idFor("leg");
+    const ok = await commit((next) => {
+      const index = next.connections.findIndex((item) => item.id === id || (item.fromItemId === value.fromItemId && item.toItemId === value.toItemId));
+      const record = { ...(index >= 0 ? next.connections[index] : {}), ...copy(value), id };
+      if (index >= 0) next.connections[index] = record; else next.connections.push(record);
+    }, "行程交通衔接已保存。");
+    return ok;
+  }
+
+  async function deleteConnection(id) {
+    return commit((next) => { next.connections = next.connections.filter((item) => item.id !== id); }, "交通衔接已删除。");
+  }
+
+  async function removeConnectionsForItem(itemId) {
+    return commit((next) => { next.connections = next.connections.filter((item) => item.fromItemId !== itemId && item.toItemId !== itemId); }, "关联交通衔接已清理。");
+  }
+
+  window.TravelContentEditor = Object.freeze({ init, openTab, getContent, getCategories: () => copy(content?.todoCategories || []), transportsForDay, getSourceDetails, saveSourceDetails, saveConnection, deleteConnection, removeConnectionsForItem });
+})();

@@ -150,6 +150,7 @@
   let billDraft = null;
   let editingMemberId = null;
   let editingNoteBillId = null;
+  let categoryFilter = "all";
   let pendingNoteSave = null;
   let noteOpenRequest = 0;
   let mutationQueue = Promise.resolve();
@@ -212,27 +213,63 @@
     return /^#[0-9a-f]{6}$/i.test(String(value || ""));
   }
 
-  function toCents(value) {
-    const normalized = String(value ?? "").trim().replace(/,/g, "");
-    if (!/^(?:\d+|\d*\.\d{1,2})$/.test(normalized)) return null;
-    const [whole = "0", fraction = ""] = normalized.split(".");
-    const cents = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
-    return Number.isSafeInteger(cents) ? cents : null;
+  function currencyExponent(currencyCode) {
+    try {
+      return new Intl.NumberFormat("en", { style: "currency", currency: currencyCode }).resolvedOptions().maximumFractionDigits;
+    } catch { return 2; }
   }
 
-  function centsToInput(cents) {
+  function parseMinorUnits(value, exponent) {
+    const normalized = String(value ?? "").trim().replace(/,/g, "");
+    if (!/^(?:\d+|\d*\.\d+)$/.test(normalized)) return null;
+    const [whole = "0", fraction = ""] = normalized.split(".");
+    if (fraction.length > exponent) return null;
+    const factor = 10 ** exponent;
+    const minor = Number(whole) * factor + Number((fraction || "").padEnd(exponent, "0") || 0);
+    return Number.isSafeInteger(minor) ? minor : null;
+  }
+
+  function toCents(value, currencyCode = ledgerData?.settings?.baseCurrency || DEFAULT_SETTINGS.baseCurrency) {
+    return parseMinorUnits(value, currencyExponent(currencyCode));
+  }
+
+  function rescaleMinorUnits(value, fromExponent, toExponent) {
+    if (!Number.isSafeInteger(value)) return null;
+    if (toExponent >= fromExponent) {
+      const scaled = BigInt(value) * (10n ** BigInt(toExponent - fromExponent));
+      return scaled <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(scaled) : null;
+    }
+    const divisor = 10n ** BigInt(fromExponent - toExponent);
+    return Number((BigInt(value) + divisor / 2n) / divisor);
+  }
+
+  function centsToInput(cents, currencyCode = ledgerData?.settings?.baseCurrency || DEFAULT_SETTINGS.baseCurrency, exponent = currencyExponent(currencyCode)) {
     if (!Number.isSafeInteger(cents)) return "";
-    return (cents / 100).toFixed(2);
+    return (cents / (10 ** exponent)).toFixed(exponent);
+  }
+
+  function ratioToPoints(value) {
+    const normalized = String(value ?? "").trim();
+    if (!/^(?:\d+|\d*\.\d{1,2})$/.test(normalized)) return null;
+    const [whole = "0", fraction = ""] = normalized.split(".");
+    const points = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
+    return Number.isSafeInteger(points) ? points : null;
+  }
+
+  function pointsToInput(points) {
+    if (!Number.isSafeInteger(points)) return "1";
+    return (points / 100).toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
   }
 
   function formatMoney(cents, currencyCode) {
-    const amount = Number(cents || 0) / 100;
+    const exponent = currencyExponent(currencyCode);
+    const amount = Number(cents || 0) / (10 ** exponent);
     try {
       return new Intl.NumberFormat("zh-CN", {
         style: "currency",
         currency: currencyCode,
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
+        minimumFractionDigits: exponent,
+        maximumFractionDigits: exponent
       }).format(amount);
     } catch {
       return `${currencyCode} ${amount.toFixed(2)}`;
@@ -277,26 +314,43 @@
     const requestedLast = String(raw.settings?.lastCurrency || baseCurrency).toUpperCase();
     const lastCurrency = availableCurrencies.has(requestedLast) ? requestedLast : baseCurrency;
     const bills = (Array.isArray(raw.bills) ? raw.bills : []).flatMap((bill) => {
-      const originalAmountCents = Number(bill?.originalAmountCents);
-      const baseAmountCents = Number(bill?.baseAmountCents);
+      const originalStored = Number(bill?.originalAmountCents);
+      const baseStored = Number(bill?.baseAmountCents);
       const currency = String(bill?.currency || baseCurrency).toUpperCase();
+      const currencyPrecision = currencyExponent(currency);
+      const basePrecision = currencyExponent(baseCurrency);
       const payerId = String(bill?.payerId || "");
       const participantIds = [...new Set(Array.isArray(bill?.participantIds) ? bill.participantIds.map(String) : [])]
         .filter((id) => travelerIds.has(id));
-      if (!Number.isSafeInteger(originalAmountCents) || originalAmountCents <= 0) return [];
-      if (!Number.isSafeInteger(baseAmountCents) || baseAmountCents <= 0) return [];
+      if (!Number.isSafeInteger(originalStored) || originalStored <= 0) return [];
+      if (!Number.isSafeInteger(baseStored) || baseStored <= 0) return [];
       if (!CURRENCY_BY_CODE.has(currency) || !travelerIds.has(payerId) || !participantIds.length) return [];
+      const originalAmountCents = rescaleMinorUnits(originalStored, Number.isInteger(bill.currencyExponent) ? bill.currencyExponent : 2, currencyPrecision);
+      const baseAmountCents = rescaleMinorUnits(baseStored, Number.isInteger(bill.baseExponent) ? bill.baseExponent : 2, basePrecision);
+      if (!Number.isSafeInteger(originalAmountCents) || originalAmountCents <= 0 || !Number.isSafeInteger(baseAmountCents) || baseAmountCents <= 0) return [];
       const category = CATEGORIES.includes(bill?.category) ? bill.category : "其他";
+      const requestedSplitMode = ["equal", "amount", "ratio"].includes(bill?.splitMode) ? bill.splitMode : "equal";
+      const rawSplitValues = bill?.splitValues && typeof bill.splitValues === "object" && !Array.isArray(bill.splitValues) ? bill.splitValues : {};
+      const splitValues = Object.fromEntries(participantIds.map((id) => [id, Number(rawSplitValues[id])]).map(([id, value]) => [id, requestedSplitMode === "amount" ? rescaleMinorUnits(value, Number.isInteger(bill.baseExponent) ? bill.baseExponent : 2, basePrecision) : value]).filter(([, value]) => Number.isSafeInteger(value) && value >= 0));
+      const splitComplete = participantIds.every((id) => Number.isSafeInteger(splitValues[id]) && splitValues[id] >= (requestedSplitMode === "ratio" ? 1 : 0));
+      const splitSum = participantIds.reduce((sum, id) => sum + (splitValues[id] || 0), 0);
+      const splitValid = requestedSplitMode === "equal" || splitComplete && (requestedSplitMode === "amount" ? splitSum === baseAmountCents : Number.isSafeInteger(splitSum) && splitSum > 0);
+      const splitMode = splitValid ? requestedSplitMode : "equal";
+      const validSplitValues = splitMode === "equal" ? {} : splitValues;
       return [{
         id: String(bill.id || makeId("bill")),
         originalAmountCents,
         baseAmountCents,
+        currencyExponent: currencyPrecision,
+        baseExponent: basePrecision,
         currency,
         category,
         note: typeof bill.note === "string" ? bill.note.trim().slice(0, 160) : "",
         orderedAt: typeof bill.orderedAt === "string" ? bill.orderedAt : "",
         payerId,
         participantIds,
+        splitMode,
+        splitValues: validSplitValues,
         createdAt: typeof bill.createdAt === "string" ? bill.createdAt : new Date().toISOString(),
         updatedAt: typeof bill.updatedAt === "string" ? bill.updatedAt : new Date().toISOString()
       }];
@@ -518,9 +572,28 @@
     ].filter((code) => CURRENCY_BY_CODE.has(code)))];
   }
 
-  function billShares(bill) {
-    const participantIds = bill.participantIds.filter((id) => travelerById(id));
+  function calculateBillShares(bill, travelers = ledgerData?.travelers || []) {
+    const travelerIds = new Set(travelers.map((traveler) => traveler.id));
+    const participantIds = bill.participantIds.filter((id) => travelerIds.has(id));
     if (!participantIds.length) return new Map();
+    if (bill.splitMode === "amount") return new Map(participantIds.map((id) => [id, Number(bill.splitValues?.[id]) || 0]));
+    if (bill.splitMode === "ratio") {
+      const weights = participantIds.map((id) => Number(bill.splitValues?.[id]) || 0);
+      const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+      if (totalWeight > 0 && Number.isSafeInteger(totalWeight)) {
+        const total = BigInt(totalWeight);
+        const portions = weights.map((weight) => {
+          const product = BigInt(bill.baseAmountCents) * BigInt(weight);
+          return { cents: Number(product / total), remainder: product % total };
+        });
+        const shares = portions.map((portion) => portion.cents);
+        let remainder = bill.baseAmountCents - shares.reduce((sum, amount) => sum + amount, 0);
+        portions.map((portion, index) => ({ index, remainder: portion.remainder }))
+          .sort((a, b) => a.remainder === b.remainder ? a.index - b.index : a.remainder > b.remainder ? -1 : 1)
+          .slice(0, remainder).forEach(({ index }) => { shares[index] += 1; });
+        return new Map(participantIds.map((id, index) => [id, shares[index]]));
+      }
+    }
     const share = Math.floor(bill.baseAmountCents / participantIds.length);
     let remainder = bill.baseAmountCents - share * participantIds.length;
     return new Map(participantIds.map((id) => {
@@ -530,8 +603,12 @@
     }));
   }
 
-  function calculateStats() {
-    const members = ledgerData.travelers.map((traveler) => ({
+  function billShares(bill) {
+    return calculateBillShares(bill);
+  }
+
+  function calculateStats(data = ledgerData) {
+    const members = data.travelers.map((traveler) => ({
       traveler,
       paidCents: 0,
       owedCents: 0,
@@ -539,13 +616,13 @@
       billIds: []
     }));
     const byId = new Map(members.map((entry) => [entry.traveler.id, entry]));
-    ledgerData.bills.forEach((bill) => {
+    data.bills.forEach((bill) => {
       const payer = byId.get(bill.payerId);
       if (payer) {
         payer.paidCents += bill.baseAmountCents;
         payer.billIds.push(bill.id);
       }
-      billShares(bill).forEach((amount, participantId) => {
+      calculateBillShares(bill, data.travelers).forEach((amount, participantId) => {
         const member = byId.get(participantId);
         if (!member) return;
         member.owedCents += amount;
@@ -603,7 +680,7 @@
       amountCents: transfer.amountCents
     }));
     return {
-      totalCents: ledgerData.bills.reduce((sum, bill) => sum + bill.baseAmountCents, 0),
+      totalCents: data.bills.reduce((sum, bill) => sum + bill.baseAmountCents, 0),
       members,
       transfers
     };
@@ -626,6 +703,19 @@
       </label>`;
   }
 
+  function renderSplitValues(mode, selected, values) {
+    if (mode === "equal") return `<div data-ledger-split-host></div>`;
+    const isAmount = mode === "amount";
+    return `<div data-ledger-split-host><div class="ledger-split-values">${ledgerData.travelers.map((traveler) => {
+      const raw = values?.[traveler.id];
+      const parsed = raw == null ? null : isAmount ? (typeof raw === "string" ? toCents(raw, ledgerData.settings.baseCurrency) : Number(raw)) : (typeof raw === "string" ? ratioToPoints(raw) : Number(raw));
+      const value = raw == null ? (isAmount ? "" : "1") : isAmount ? centsToInput(parsed, ledgerData.settings.baseCurrency) : pointsToInput(parsed);
+      const exponent = currencyExponent(ledgerData.settings.baseCurrency);
+      const amountPlaceholder = exponent ? `0.${"0".repeat(exponent)}` : "0";
+      return `<label class="ledger-split-value${selected.has(traveler.id) ? "" : " is-unselected"}"><span>${escapeHtml(traveler.name)}</span><span class="ledger-split-value-input"><input class="ledger-input" name="splitValue-${escapeAttribute(traveler.id)}" type="text" inputmode="decimal" autocomplete="off" placeholder="${isAmount ? amountPlaceholder : "1"}" value="${escapeAttribute(value)}" ${selected.has(traveler.id) ? "" : "disabled"}><small>${isAmount ? `金额 · ${escapeHtml(ledgerData.settings.baseCurrency)}` : "比例"}</small></span></label>`;
+    }).join("")}</div></div>`;
+  }
+
   function renderCurrencyOptions(selectedCode) {
     return availableCurrencyCodes(selectedCode).map((code) => {
       const currency = currencyByCode(code);
@@ -638,6 +728,8 @@
     const draft = editingBill ? null : billDraft;
     const currency = editingBill?.currency || draft?.currency || ledgerData.settings.lastCurrency;
     const baseCurrency = ledgerData.settings.baseCurrency;
+    const currencyPrecision = currencyExponent(currency);
+    const amountPlaceholder = currencyPrecision ? `0.${"0".repeat(currencyPrecision)}` : "0";
     const isForeign = currency !== baseCurrency;
     const selectedParticipants = new Set(
       editingBill?.participantIds
@@ -646,6 +738,8 @@
     );
     const selectedPayerId = editingBill?.payerId || draft?.payerId || "";
     const selectedCategory = editingBill?.category || draft?.category || "餐饮";
+    const splitMode = editingBill?.splitMode || draft?.splitMode || "equal";
+    const splitValues = editingBill?.splitValues || draft?.splitValues || {};
     return `
       <section class="ledger-entry-card" aria-labelledby="ledger-bill-form-title">
         <div class="ledger-section-heading">
@@ -668,14 +762,14 @@
               </label>
               <label class="ledger-field ledger-field-amount">
                 <span class="ledger-field-label">金额</span>
-                <input class="ledger-amount-input" name="originalAmount" data-ledger-field="original-amount" type="text" inputmode="decimal" autocomplete="off" placeholder="0.00" value="${escapeAttribute(editingBill ? centsToInput(editingBill.originalAmountCents) : draft?.originalAmount || "")}" required>
+                <input class="ledger-amount-input" name="originalAmount" data-ledger-field="original-amount" type="text" inputmode="decimal" autocomplete="off" placeholder="${amountPlaceholder}" value="${escapeAttribute(editingBill ? centsToInput(editingBill.originalAmountCents, editingBill.currency) : draft?.originalAmount || "")}" required>
               </label>
             </div>
             <label class="ledger-field ledger-converted-field" data-ledger-converted-field ${isForeign ? "" : "hidden"}>
               <span class="ledger-field-label">折合${escapeHtml(currencyByCode(baseCurrency).nameZh)}</span>
               <span class="ledger-converted-input-wrap">
                 <span class="ledger-converted-code">${escapeHtml(baseCurrency)}</span>
-                <input class="ledger-input" name="baseAmount" data-ledger-field="base-amount" type="text" inputmode="decimal" autocomplete="off" placeholder="手动填写换算后的总金额" value="${escapeAttribute(editingBill && isForeign ? centsToInput(editingBill.baseAmountCents) : draft?.baseAmount || "")}" ${isForeign ? "required" : ""}>
+                <input class="ledger-input" name="baseAmount" data-ledger-field="base-amount" type="text" inputmode="decimal" autocomplete="off" placeholder="手动填写换算后的总金额" value="${escapeAttribute(editingBill && isForeign ? centsToInput(editingBill.baseAmountCents, baseCurrency) : draft?.baseAmount || "")}" ${isForeign ? "required" : ""}>
               </span>
               <small class="ledger-field-help">按付款当时采用的汇率手动填写</small>
             </label>
@@ -717,6 +811,17 @@
                 ${ledgerData.travelers.map((traveler) => renderPersonChoice(traveler, "checkbox", "participantIds", selectedParticipants.has(traveler.id))).join("")}
               </div>
               <p class="ledger-split-summary" data-ledger-split-summary></p>
+            </fieldset>
+
+            <fieldset class="ledger-fieldset ledger-split-mode-fieldset">
+              <legend class="ledger-field-label">分摊方式</legend>
+              <div class="ledger-split-mode-options" role="group" aria-label="分摊方式">
+                <label><input type="radio" name="splitMode" value="equal" ${splitMode === "equal" ? "checked" : ""}><span>多人均分</span></label>
+                <label><input type="radio" name="splitMode" value="amount" ${splitMode === "amount" ? "checked" : ""}><span>指定金额</span></label>
+                <label><input type="radio" name="splitMode" value="ratio" ${splitMode === "ratio" ? "checked" : ""}><span>按比例</span></label>
+              </div>
+              ${renderSplitValues(splitMode, selectedParticipants, splitValues)}
+              <p class="ledger-split-validation" data-ledger-split-validation role="status" aria-live="polite"></p>
             </fieldset>
 
             <p class="ledger-form-error" data-ledger-form-error role="alert"></p>
@@ -878,12 +983,13 @@
 
   function renderBillList() {
     const baseCurrency = ledgerData.settings.baseCurrency;
-    const totalCents = ledgerData.bills.reduce((sum, bill) => sum + bill.baseAmountCents, 0);
-    const bills = [...ledgerData.bills].sort((first, second) => {
+    const allBills = [...ledgerData.bills].sort((first, second) => {
       const firstDate = first.orderedAt || first.createdAt;
       const secondDate = second.orderedAt || second.createdAt;
       return secondDate.localeCompare(firstDate);
     });
+    const bills = categoryFilter === "all" ? allBills : allBills.filter((bill) => bill.category === categoryFilter);
+    const totalCents = bills.reduce((sum, bill) => sum + bill.baseAmountCents, 0);
     return `
       <section class="ledger-list-section" aria-labelledby="ledger-list-title">
         <div class="ledger-section-heading ledger-list-heading">
@@ -891,14 +997,14 @@
             <p class="ledger-section-kicker">账单明细</p>
             <h2 id="ledger-list-title">${bills.length ? `${bills.length} 笔账单` : "还没有账单"}</h2>
           </div>
-          <div class="ledger-list-total">
+          <div class="ledger-list-controls"><label class="ledger-category-filter"><span>类别</span><select class="ledger-input" data-ledger-category-filter><option value="all" ${categoryFilter === "all" ? "selected" : ""}>全部类别</option>${CATEGORIES.map((category) => `<option value="${escapeAttribute(category)}" ${categoryFilter === category ? "selected" : ""}>${escapeHtml(category)}</option>`).join("")}</select></label><div class="ledger-list-total">
             <span>总支出</span>
             <strong>${escapeHtml(formatMoney(totalCents, baseCurrency))}</strong>
-          </div>
+          </div></div>
         </div>
         ${bills.length
           ? `<div class="ledger-bill-list">${bills.map(renderBillRow).join("")}</div>`
-          : `<div class="ledger-empty-state"><p>记下第一笔花费后，账单会显示在这里。</p></div>`}
+          : `<div class="ledger-empty-state"><p>${categoryFilter === "all" ? "记下第一笔花费后，账单会显示在这里。" : `“${escapeHtml(categoryFilter)}”类别下还没有支出。`}</p></div>`}
       </section>`;
   }
 
@@ -1258,8 +1364,19 @@
       note: String(formData.get("note") || "").trim().slice(0, 160),
       orderedAt: String(formData.get("orderedAt") || ""),
       payerId: String(formData.get("payerId") || ""),
-      participantIds: formData.getAll("participantIds").map(String)
+      participantIds: formData.getAll("participantIds").map(String),
+      splitMode: String(formData.get("splitMode") || "equal"),
+      splitValues: Object.fromEntries([...form.querySelectorAll('[name^="splitValue-"]')].map((input) => [input.name.slice("splitValue-".length), String(input.value)]))
     };
+  }
+
+  function refreshSplitInputs(form) {
+    const host = form.querySelector("[data-ledger-split-host]");
+    if (!host) return;
+    const mode = form.elements.splitMode?.value || "equal";
+    const selected = new Set([...form.querySelectorAll('input[name="participantIds"]:checked')].map((input) => input.value));
+    const values = Object.fromEntries([...form.querySelectorAll('[name^="splitValue-"]')].map((input) => [input.name.slice("splitValue-".length), input.value]));
+    host.outerHTML = renderSplitValues(mode, selected, values);
   }
 
   function syncSplitSummary() {
@@ -1276,9 +1393,24 @@
     const amountField = currency === ledgerData.settings.baseCurrency
       ? form.elements.originalAmount
       : form.elements.baseAmount;
-    const amountCents = toCents(amountField?.value);
+    const amountCurrency = currency === ledgerData.settings.baseCurrency ? currency : ledgerData.settings.baseCurrency;
+    const amountCents = toCents(amountField?.value, amountCurrency);
     if (!amountCents || amountCents <= 0) {
       summary.textContent = `已选 ${participants.length} 人 · 按人数平分`;
+      return;
+    }
+    const mode = form.elements.splitMode?.value || "equal";
+    const labels = { equal: "按人数均分", amount: "指定每人承担金额", ratio: "按比例分摊" };
+    const validation = form.querySelector("[data-ledger-split-validation]");
+    if (mode === "amount") {
+      const total = participants.reduce((sum, input) => sum + (toCents(form.elements.namedItem(`splitValue-${input.value}`)?.value, ledgerData.settings.baseCurrency) || 0), 0);
+      validation.textContent = total === amountCents ? `金额合计 ${formatMoney(total, ledgerData.settings.baseCurrency)}，与账单相符` : `已指定 ${formatMoney(total, ledgerData.settings.baseCurrency)}，还需与账单 ${formatMoney(amountCents, ledgerData.settings.baseCurrency)} 相等`;
+    } else if (mode === "ratio") {
+      const total = participants.reduce((sum, input) => sum + (ratioToPoints(form.elements[`splitValue-${input.value}`]?.value) || 0), 0);
+      validation.textContent = total > 0 ? `参与分摊比例合计 ${pointsToInput(total)}；尾差按最大余数分配` : "请填写每位参与者的正数比例";
+    } else validation.textContent = "";
+    if (mode !== "equal") {
+      summary.textContent = `已选 ${participants.length} 人 · ${labels[mode]}`;
       return;
     }
     const averageCents = Math.floor(amountCents / participants.length);
@@ -1393,20 +1525,22 @@
   async function submitBill(form) {
     const formData = new FormData(form);
     const currency = String(formData.get("currency") || "").toUpperCase();
-    const originalAmountCents = toCents(formData.get("originalAmount"));
+    const originalAmountCents = toCents(formData.get("originalAmount"), currency);
     const isForeign = currency !== ledgerData.settings.baseCurrency;
-    const baseAmountCents = isForeign ? toCents(formData.get("baseAmount")) : originalAmountCents;
+    const baseAmountCents = isForeign ? toCents(formData.get("baseAmount"), ledgerData.settings.baseCurrency) : originalAmountCents;
     const category = String(formData.get("category") || "");
     const payerId = String(formData.get("payerId") || "");
     const participantIds = [...new Set(formData.getAll("participantIds").map(String))]
       .filter((id) => travelerById(id));
+    const splitMode = String(formData.get("splitMode") || "equal");
+    const splitValues = {};
 
     if (!availableCurrencyCodes(currency).includes(currency)) {
       setFormError(form, "请选择本次旅程使用的币种。");
       return;
     }
     if (!originalAmountCents || originalAmountCents <= 0) {
-      setFormError(form, "请输入正确的账单金额，最多保留两位小数。");
+      setFormError(form, `请输入有效金额，${currency} 最多保留 ${currencyExponent(currency)} 位小数。`);
       form.elements.originalAmount?.focus();
       return;
     }
@@ -1428,16 +1562,41 @@
       return;
     }
 
+    if (splitMode === "amount") {
+      for (const id of participantIds) {
+        const amount = toCents(formData.get(`splitValue-${id}`), ledgerData.settings.baseCurrency);
+        if (amount === null) { setFormError(form, `请填写${travelerById(id)?.name || "参与者"}的分摊金额，最多保留 ${currencyExponent(ledgerData.settings.baseCurrency)} 位小数。`); return; }
+        splitValues[id] = amount;
+      }
+      if (participantIds.reduce((sum, id) => sum + splitValues[id], 0) !== baseAmountCents) {
+        setFormError(form, "指定金额的合计必须与账单折合金额完全相等。"); return;
+      }
+    } else if (splitMode === "ratio") {
+      for (const id of participantIds) {
+        const ratio = ratioToPoints(formData.get(`splitValue-${id}`));
+        if (!Number.isSafeInteger(ratio) || ratio <= 0) { setFormError(form, `请填写${travelerById(id)?.name || "参与者"}的大于 0 的分摊比例。`); return; }
+        splitValues[id] = ratio;
+      }
+      const ratioTotal = participantIds.reduce((sum, id) => sum + splitValues[id], 0);
+      if (!Number.isSafeInteger(ratioTotal) || ratioTotal <= 0) { setFormError(form, "分摊比例合计无效。"); return; }
+    } else if (splitMode !== "equal") {
+      setFormError(form, "请选择有效的分摊方式。"); return;
+    }
+
     const now = new Date().toISOString();
     const fields = {
       originalAmountCents,
       baseAmountCents,
+      currencyExponent: currencyExponent(currency),
+      baseExponent: currencyExponent(ledgerData.settings.baseCurrency),
       currency,
       category,
       note: String(formData.get("note") || "").trim().slice(0, 160),
       orderedAt: String(formData.get("orderedAt") || ""),
       payerId,
       participantIds,
+      splitMode,
+      splitValues,
       updatedAt: now
     };
     const billBeingEdited = ledgerData.bills.find((bill) => bill.id === editingBillId);
@@ -1755,6 +1914,7 @@
       const shouldSelectAll = inputs.some((input) => !input.checked);
       inputs.forEach((input) => { input.checked = shouldSelectAll; });
       captureBillDraft();
+      refreshSplitInputs(form);
       syncSplitSummary();
     }
   }
@@ -1790,8 +1950,16 @@
 
   function handleRootChange(event) {
     if (event.target.matches('[data-ledger-field="currency"]')) syncCurrencyField(event.target);
-    if (event.target.closest('[data-ledger-form="bill"]')) {
+    if (event.target.matches("[data-ledger-category-filter]")) {
+      categoryFilter = event.target.value;
       captureBillDraft();
+      renderApp();
+      return;
+    }
+    if (event.target.closest('[data-ledger-form="bill"]')) {
+      const form = event.target.closest('[data-ledger-form="bill"]');
+      captureBillDraft();
+      if (event.target.name === "splitMode" || event.target.name === "participantIds") refreshSplitInputs(form);
       syncSplitSummary();
     }
   }
@@ -1889,6 +2057,13 @@
     setActiveTab,
     createLocalStorageAdapter,
     createD1Adapter,
+    normalizeData,
+    toCents,
+    centsToInput,
+    currencyExponent,
+    ratioToPoints,
+    calculateBillShares,
+    calculateStats,
     getPersistenceMode() {
       return ledgerPersistenceMode;
     },

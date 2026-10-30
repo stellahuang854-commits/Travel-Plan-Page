@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f2eee6">
+  <title>私人旅行访问管理</title>
+  <link rel="stylesheet" href="styles.css?v=20261030-phase5-1">
+  <script src="cloud-client.js?v=20261030-phase5-1" defer></script>
+  <script src="cloud-migration.js?v=20261030-phase5-1" defer></script>
+  <script src="cloud-access.js?v=20261030-phase5-1" defer></script>
+</head>
+<body>
+  <header class="topbar"><a class="wordmark" href="index.html">TRAVEL PLAN</a><span>PRIVATE ACCESS</span></header>
+  <main id="main">
+    <section class="hero"><p class="hero__eyebrow">OWNER CONTROLS</p><h1>同行者访问管理</h1><p class="hero__date" id="cloud-access-user">正在检查私人访问…</p></section>
+    <section class="section"><div class="section-heading"><h2>选择旅行</h2><select id="cloud-access-trip" aria-label="选择旅行"></select></div><p id="cloud-access-status" class="travel-content-status" role="status" aria-live="polite"></p></section>
+    <section class="section"><div class="section-heading"><h2>邀请同行者</h2></div><form id="cloud-invite-form" class="travel-editor-fields"><label class="travel-editor-field"><span>受邀邮箱（建议填写）</span><input name="email" type="email" autocomplete="email" placeholder="name@example.com"></label><label class="travel-editor-field"><span>访问角色</span><select name="role"><option value="viewer">Viewer · 只读</option><option value="editor">Editor · 可编辑</option></select></label><label class="travel-editor-field"><span>有效期</span><select name="expiresInDays"><option value="1">1 天</option><option value="7" selected>7 天</option><option value="14">14 天</option><option value="30">30 天</option></select></label><div class="travel-editor-actions"><button type="submit">创建邀请链接</button></div></form><p id="cloud-invite-result" class="travel-content-status" aria-live="polite"></p><label id="cloud-invite-link-wrap" class="travel-editor-field" hidden><span>此邀请链接只在创建时显示</span><input id="cloud-invite-link" type="url" readonly></label><div class="travel-editor-actions"><button id="cloud-invite-copy" type="button" hidden>复制邀请链接</button></div></section>
+    <section class="section"><div class="section-heading"><h2>同行者</h2></div><div id="cloud-member-list" class="travel-content-list"></div></section>
+    <section class="section"><div class="section-heading"><h2>邀请记录</h2></div><div id="cloud-invitation-list" class="travel-content-list"></div></section>
+    <section class="section"><div class="section-heading"><h2>云端备份与历史版本</h2></div><p>下载备份会读取本旅行状态和附件。恢复历史版本会创建一个新版本，不删除历史记录。</p><div class="travel-editor-actions"><button id="cloud-backup-download" type="button">下载云端备份</button></div><div id="cloud-revision-list" class="travel-content-list"></div></section>
+  </main>
+</body>
+</html>

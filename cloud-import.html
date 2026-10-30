@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f2eee6">
+  <title>导入私人云端旅行</title>
+  <link rel="stylesheet" href="styles.css?v=20261030-phase5-1">
+  <script src="cloud-client.js?v=20261030-phase5-1" defer></script>
+  <script src="cloud-migration.js?v=20261030-phase5-1" defer></script>
+  <script src="cloud-transfer.js?v=20261030-phase5-1" defer></script>
+</head>
+<body>
+  <header class="topbar"><a class="wordmark" href="index.html">TRAVEL PLAN</a><span>PRIVATE CLOUD</span></header>
+  <main id="main">
+    <section class="hero"><p class="hero__eyebrow">PRIVATE TRAVEL ARCHIVE</p><h1>导入旅行备份</h1><p class="hero__date">仅在你选择文件并确认后，将数据发送到当前登录的网站。</p></section>
+    <section class="section"><div class="section-heading"><h2>选择之前保存的备份</h2></div><label class="travel-editor-field"><span>旅行备份 JSON</span><input id="cloud-transfer-file" type="file" accept=".json,application/json"></label><p>迁移只允许创建空云端旅行；原浏览器资料不会清除。附件将逐个上传，失败时可再次选择相同备份继续。</p><p id="cloud-transfer-status" class="travel-content-status" role="status" aria-live="polite"></p><div class="travel-editor-actions"><button id="cloud-transfer-action" type="button" disabled>导入到私人云端</button></div></section>
+  </main>
+</body>
+</html>

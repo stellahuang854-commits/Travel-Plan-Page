@@ -1,0 +1,19 @@
+name = "travel-plan-private"
+pages_build_output_dir = "./dist"
+compatibility_date = "2026-10-30"
+
+[[d1_databases]]
+binding = "TRAVEL_DB"
+database_name = "SET_AFTER_CREATING_D1"
+database_id = "SET_AFTER_CREATING_D1"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "TRAVEL_ATTACHMENTS"
+bucket_name = "SET_AFTER_CREATING_PRIVATE_R2_BUCKET"
+
+[vars]
+# Set these as Pages production and preview variables after configuring Access.
+ACCESS_TEAM_DOMAIN = "SET_TO_YOUR_TEAM.cloudflareaccess.com"
+ACCESS_AUD = "SET_TO_THE_ACCESS_APPLICATION_AUD_TAG"
+DEFAULT_TRIP_ID = "SET_TO_THE_PRIVATE_TRIP_ID"
