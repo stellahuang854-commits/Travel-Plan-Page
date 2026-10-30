@@ -1,0 +1,7 @@
+name = "travel-plan-private"
+pages_build_output_dir = "./dist"
+compatibility_date = "2026-10-30"
+
+# D1 and R2 bindings are intentionally not declared until their Cloudflare
+# resources exist. Add their real, account-specific IDs/names after creation.
+# Do not put credentials or secrets in this file.

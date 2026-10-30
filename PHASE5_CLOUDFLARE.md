@@ -48,7 +48,7 @@
 Cloudflare 资源尚未创建。开始前需要在用户账号中：
 
 1. 创建 Pages 项目（部署动作本阶段未执行），创建 D1 数据库和私有 R2 bucket。
-2. 把 `wrangler.toml.example` 复制为 `wrangler.toml`，填写真实 D1 database ID 和 R2 bucket 名称。不要将密钥放入源码。
+2. 仓库中的 `wrangler.toml` 已固定 Pages 项目名 `travel-plan-private` 和 `./dist` 输出目录。创建 D1/R2 后，再将真实 binding 名称和 ID 加入此文件；不要复制含占位值的 `wrangler.toml.example`，也不要将密钥放入源码。
 3. 在 Pages 项目绑定 `TRAVEL_DB` 与 `TRAVEL_ATTACHMENTS`，将 `migrations/0001_private_travel.sql` 应用到数据库。
 4. 配置 Cloudflare Access 应用，保护整个站点路径 `/*`，并确保只有预期身份能登录。获取 team domain 与该 Access application 的 AUD。
 5. 在 Pages Functions 环境设置 `ACCESS_TEAM_DOMAIN`、`ACCESS_AUD`、`DEFAULT_TRIP_ID`。这些不是数据库管理密钥；Access AUD 仅用于验证令牌。不要将 D1/R2 管理密钥暴露到浏览器。
@@ -58,6 +58,7 @@ Cloudflare 资源尚未创建。开始前需要在用户账号中：
 
 ## 本地检查与尚未验证的部分
 
+- Cloudflare Git 集成使用 `npm run build:pages` 作为 Build command，输出目录为 `dist`；Pages 在构建成功后自动发布，无单独 Deploy command 字段。手动 CLI 发布可运行 `npm run deploy:pages`，它会构建并将 `dist` 发布到 `travel-plan-private`。
 - `npm run build:pages` 检查静态发布白名单；输出目录 `dist/` 不包含 `trip-data.json`。
 - `npx wrangler pages dev dist` 需要先安装/提供 Wrangler 并设置本地 bindings。当前环境没有 Cloudflare 账号凭证或已配置 bindings，故未声称 Pages Functions、Access、D1、R2 已在 Cloudflare 实际运行。
 - API 自动测试使用模拟身份、D1 仓储和 R2 bucket，覆盖匿名/伪造令牌、角色、跨旅行访问、并发 revision、邀请和附件访问；它们不替代真实 Cloudflare 集成测试。
