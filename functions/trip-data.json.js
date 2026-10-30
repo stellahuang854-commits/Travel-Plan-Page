@@ -1,7 +1,5 @@
-import tripTemplateSource from "../trip-data.json";
+import tripTemplate from "./trip-template.generated.js";
 import { createD1Repository } from "../worker/travel-api.mjs";
-
-const tripTemplate = JSON.parse(tripTemplateSource);
 
 export async function onRequest(context) {
   if (context.request.method !== "GET" && context.request.method !== "HEAD") return new Response("Method not allowed", { status: 405, headers: { allow: "GET, HEAD" } });

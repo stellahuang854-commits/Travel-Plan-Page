@@ -14,7 +14,3 @@ migrations_dir = "migrations"
 [[r2_buckets]]
 binding = "TRAVEL_ATTACHMENTS"
 bucket_name = "travel-plan-private-attachments"
-
-[[rules]]
-type = "Text"
-globs = ["trip-data.json"]

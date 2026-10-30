@@ -8,7 +8,7 @@ Pages Functions、D1 和 R2 架构保留。`TRAVEL_DB` 连接旅行包、旅行�
 
 ## 旅行包加载及持久化
 
-- Pages Function 通过 Wrangler 的 Text module rule 将根目录 `trip-data.json` 打包为函数模块；原始文件不会被复制到 `dist` 公开静态目录。
+- Pages 构建脚本从根目录读取 `trip-data.json`，安全生成被 Git 忽略的 `functions/trip-template.generated.js`；Wrangler 会将它作为普通 JS 依赖打包进 Pages Function。原始 JSON 不会复制到 `dist`，也不再使用 Pages 不支持的 `rules` 配置。
 - `/trip-data.json` Pages Function 优先读取 D1 中唯一已保存的旅行包，不要求 `DEFAULT_TRIP_ID`。如果 D1 还没有旅行包，则返回构建时读取的项目模板，不会自动写入 D1。
 - 当前仓库模板的 `tripId` 是 `unconfigured`，标题为“旅行计划”，行程和旅行模块为空且模块关闭。它不是已填写的真实旅行资料。无云端旅行包时，页面会使用该模板及浏览器本地存储；每台浏览器的数据不会自动同步。
 - API 只接受 D1 当前唯一旅行包中的 `tripId`，猜测其他旅行 ID 返回 404。如果 D1 存在多个旅行包，页面会报明确错误，不会自行挑选或覆盖。
