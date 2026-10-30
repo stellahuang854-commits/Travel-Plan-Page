@@ -93,3 +93,75 @@ test("local ledger saves survive reload and remain isolated by tripId", async ()
   assert.equal((await ledger.createLocalStorageAdapter("trip-two", { storage }).load()), null);
 });
 
+test("D1 ledger bills and travelers survive cloud snapshot reloads and support add, edit, and delete", async () => {
+  const previousFetch = global.fetch;
+  let revision = 6;
+  let cloud = { version: 1, settings: { baseCurrency: "CNY", commonCurrencies: ["EUR"], lastCurrency: "CNY" }, travelers: [], bills: [], todos: [], tickets: [] };
+  global.fetch = async (_url, init = {}) => {
+    if (init.method === "POST") {
+      const changes = JSON.parse(init.body).changes;
+      for (const change of changes) {
+        const list = cloud[change.collection];
+        const index = list.findIndex((item) => item.id === change.id);
+        if (change.op === "delete") { if (index >= 0) list.splice(index, 1); }
+        else if (index >= 0) list[index] = change.value;
+        else list.push(change.value);
+      }
+      revision += 1;
+    }
+    return { ok: true, async json() { return { ...structuredClone(cloud), revision }; } };
+  };
+  try {
+    const adapter = ledger.createD1Adapter("cloud-ledger", { apiBase: "/api/trip" });
+    let snapshot = ledger.normalizeData(await adapter.load());
+    snapshot.travelers.push({ id: "a", name: "A" }, { id: "b", name: "B" });
+    snapshot.bills.push(bill({ id: "new-expense", amount: 2400, participants: ["a"], payer: "a" }));
+    await adapter.save(snapshot);
+
+    snapshot = ledger.normalizeData(await ledger.createD1Adapter("cloud-ledger", { apiBase: "/api/trip" }).load());
+    assert.equal(snapshot.bills[0].id, "new-expense");
+    snapshot.bills[0] = { ...snapshot.bills[0], note: "edited" };
+    await ledger.createD1Adapter("cloud-ledger", { apiBase: "/api/trip" }).save(snapshot);
+
+    snapshot = ledger.normalizeData(await ledger.createD1Adapter("cloud-ledger", { apiBase: "/api/trip" }).load());
+    assert.equal(snapshot.bills[0].note, "edited");
+    snapshot.bills = [];
+    await ledger.createD1Adapter("cloud-ledger", { apiBase: "/api/trip" }).save(snapshot);
+    const afterDelete = ledger.normalizeData(await ledger.createD1Adapter("cloud-ledger", { apiBase: "/api/trip" }).load());
+    assert.deepEqual(afterDelete.bills, []);
+    assert.deepEqual(afterDelete.travelers.map((person) => person.id), ["a", "b"]);
+  } finally { global.fetch = previousFetch; }
+});
+
+test("preserved local AA snapshot stays untouched while D1 reads and saves cloud state", async () => {
+  const previousFetch = global.fetch;
+  const values = new Map();
+  const storage = { getItem: (key) => values.get(key) || null, setItem: (key, value) => values.set(key, String(value)) };
+  const oldLocal = ledger.createLocalStorageAdapter("same-trip", { storage });
+  await oldLocal.save(data([bill({ id: "local-bill", amount: 789 })]));
+  const localKey = oldLocal.storageKey;
+  const before = values.get(localKey);
+  let cloud = { version: 1, settings: null, travelers: [], bills: [], todos: [], tickets: [] };
+  global.fetch = async (_url, init = {}) => {
+    if (init.method === "POST") {
+      for (const change of JSON.parse(init.body).changes) {
+        const list = cloud[change.collection];
+        const index = list.findIndex((item) => item.id === change.id);
+        if (change.op === "delete") { if (index >= 0) list.splice(index, 1); }
+        else if (index >= 0) list[index] = change.value;
+        else list.push(change.value);
+      }
+    }
+    return { ok: true, async json() { return structuredClone(cloud); } };
+  };
+  try {
+    const adapter = ledger.createD1Adapter("same-trip", { apiBase: "/api/trip" });
+    const remote = await adapter.load();
+    remote.travelers.push({ id: "cloud-person", name: "Cloud person" });
+    await adapter.save(remote);
+    const legacy = await ledger.createLocalStorageAdapter("same-trip", { storage }).load();
+    assert.equal(legacy.bills[0].id, "local-bill");
+    assert.equal(values.get(localKey), before, "cloud writes leave preserved local data unchanged");
+  } finally { global.fetch = previousFetch; }
+});
+

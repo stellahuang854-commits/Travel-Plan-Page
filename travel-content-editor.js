@@ -192,11 +192,12 @@
   function openForm(kind, record = null) {
     editing = { kind, id: record?.id || null };
     editingValue = record ? copy(record) : null;
+    const isEditing = Boolean(record?.id);
     const fields = [];
     const existing = record || {};
     let title = "新增资料";
     if (kind === "accommodations") {
-      title = record ? "编辑住宿" : "新增住宿";
+      title = isEditing ? "编辑住宿" : "新增住宿";
       fields.push(field("名称", "name", existing.name));
       fields.push(field("地址", "address", existing.address));
       fields.push(field("入住日期", "checkInDate", existing.checkInDate || existing.checkIn?.date, "date"));
@@ -206,18 +207,18 @@
       fields.push(field("预订凭证（链接或文件路径）", "documentUrl", existing.documentUrl || existing.bookingDocument?.url));
       fields.push(textarea("备注", "notes", existing.notes || existing.note));
     } else if (kind === "restaurants") {
-      title = record ? "编辑餐厅" : "新增餐厅";
+      title = isEditing ? "编辑餐厅" : "新增餐厅";
       fields.push(field("名称", "name", existing.name)); fields.push(field("地址", "address", existing.address));
       fields.push(field("日期", "date", existing.date, "date")); fields.push(field("预约时间", "reservationTime", existing.reservationTime || existing.time, "time"));
       fields.push(field("预约人数", "partySize", existing.partySize, "number", { inputmode: "numeric" }));
       fields.push(field("联系方式", "contact", existing.contact || existing.phone)); fields.push(field("预订链接", "bookingUrl", existing.bookingUrl || existing.url, "url"));
       fields.push(textarea("备注", "notes", existing.notes || existing.note));
     } else if (kind === "days") {
-      title = record ? "编辑行程日期" : "新增行程日期";
+      title = isEditing ? "编辑行程日期" : "新增行程日期";
       fields.push(field("日期", "date", existing.date, "date")); fields.push(field("标题", "title", existing.title));
       fields.push(textarea("地点（每行一个）", "locations", (existing.locations || []).join("\n")));
     } else if (kind === "schedule") {
-      title = record ? "编辑行程安排" : "新增行程安排";
+      title = isEditing ? "编辑行程安排" : "新增行程安排";
       fields.push(field("开始时间", "time", existing.time, "time")); fields.push(field("结束时间", "endTime", existing.endTime, "time"));
       fields.push(field("活动名称", "text", existing.text || existing.title)); fields.push(field("地点", "location", existing.location || existing.placeName));
       fields.push(selectField("地图地点（可选）", "placeId", (context.data.places || []).map((place) => [place.id, place.nameZh || place.name || place.id]), existing.placeId || ""));
@@ -233,7 +234,7 @@
       fields.push(textarea("相关文件链接（每行一个）", "documentUrls", (existing.documentUrls || []).map((item) => typeof item === "string" ? item : item.url).join("\n")));
       fields.push(selectField("关联交通", "transportIds", transportList().map((item) => [item.id, formatTransport(item).join(" · ")]), "", true));
     } else if (kind === "transportRecords") {
-      title = record ? "编辑交通" : "新增交通";
+      title = isEditing ? "编辑交通" : "新增交通";
       const linked = Boolean(existing.sourceType);
       const typeValue = existing.type || "train";
       fields.push(selectField("交通方式", "type", transportTypes, typeValue));
@@ -520,6 +521,13 @@
     renderTabs(); renderList();
   }
 
+  function openTransportForRole(role) {
+    const journeyRole = window.TravelContentStore.normalizeJourneyRole(role);
+    if (!journeyRole) return;
+    openDialog("transportRecords");
+    openForm("transportRecords", { type: "other", journeyRole });
+  }
+
   function renderTabs() {
     document.querySelectorAll("[data-travel-tab]").forEach((button) => {
       button.setAttribute("aria-pressed", String(button.dataset.travelTab === activeTab));
@@ -719,5 +727,5 @@
     return commit((next) => { next.connections = next.connections.filter((item) => item.fromItemId !== itemId && item.toItemId !== itemId); }, "关联交通衔接已清理。");
   }
 
-  window.TravelContentEditor = Object.freeze({ init, openTab, getContent, getCategories: () => copy(content?.todoCategories || []), transportsForDay, getSourceDetails, saveSourceDetails, saveConnection, deleteConnection, removeConnectionsForItem });
+  window.TravelContentEditor = Object.freeze({ init, openTab, openTransportForRole, getContent, getCategories: () => copy(content?.todoCategories || []), transportsForDay, getSourceDetails, saveSourceDetails, saveConnection, deleteConnection, removeConnectionsForItem });
 })();

@@ -41,11 +41,17 @@ function normalizeTripConfig(raw = {}) {
 }
 
 function moduleEnabled(name) {
+  if (name === "ledger") return true;
   return Boolean(state.config && state.config.modules?.[name] === true);
 }
 
 function applyModuleConfig() {
   document.querySelectorAll("[data-module]").forEach((element) => {
+    if (element.id === "ledger-view") return;
+    if (element.id === "flights" || element.id === "ledger-navigation-link") {
+      element.hidden = false;
+      return;
+    }
     element.hidden = !moduleEnabled(element.dataset.module);
   });
   const visibleTravelLinks = [...document.querySelectorAll(".travel-navigation-menu [data-module]")].filter((link) => !link.hidden);
@@ -339,8 +345,7 @@ function renderFlights() {
   const currentContent = window.TravelContentEditor?.getContent();
   const transportRecords = currentContent?.transportRecords || [];
   const section = $("#flights");
-  const hasBoardingPasses = transportRecords.some((record) => ["outbound", "return"].includes(transportDirection(record)) && window.TravelContentStore.normalizePassengerJourneys(record).length);
-  if (section) section.hidden = !hasBoardingPasses;
+  if (section) section.hidden = false;
   const navigationLink = document.querySelector('.travel-navigation-menu [data-module="flights"]');
   if (navigationLink) navigationLink.hidden = section?.hidden ?? true;
   const navigation = $("#travel-navigation");
@@ -480,7 +485,8 @@ function setupTransportDetailDialog() {
       if (record) openTransportDetail({ transportId: record.id, sourceType: "record", sourceId: record.id, type: record.type, title: record.journeyRole === "return" ? "回程交通详情" : record.journeyRole === "outbound" ? "去程交通详情" : "交通详情", transport: record });
       return;
     }
-    if (event.target.closest("[data-add-transport]")) { window.TravelContentEditor?.openTab("transportRecords"); return; }
+    const addTransport = event.target.closest("[data-add-transport]");
+    if (addTransport) { window.TravelContentEditor?.openTransportForRole?.(addTransport.dataset.addTransport); return; }
   });
   window.addEventListener("travel-transport-detail", (event) => {
     const record = event.detail;
@@ -1516,7 +1522,10 @@ async function init() {
     if (moduleEnabled("driving")) renderRental();
     if (moduleEnabled("todo")) renderTravelPrep();
     if (moduleEnabled("ledger")) {
-      await window.TravelLedger?.init?.({ tripId: state.data.metadata.tripId, config: state.config });
+      const persistence = state.config.persistence?.mode === "d1"
+        ? { mode: "d1", sharedCollections: ["ledger"], apiBase: state.config.persistence.apiBase || "/api/trip" }
+        : { mode: "local" };
+      await window.TravelLedger?.init?.({ tripId: state.data.metadata.tripId, config: state.config, persistence });
       $("#ledger-root")?.addEventListener("travel-ledger:changed", () => { renderFlights(); renderTravelContentDisplay(); });
     }
     renderFlights();

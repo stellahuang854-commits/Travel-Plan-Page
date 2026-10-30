@@ -113,7 +113,9 @@ test("homepage boarding passes show only explicit outbound and return passenger 
 test("a legacy record without journeyRole does not create an outbound or return boarding pass", () => {
   const content = emptyContent();
   content.transportRecords.push({ id: "legacy", type: "flight", sourceType: "flight", sourceId: "legacy-flight", passengerJourneys: [{ id: "leg", type: "flight", serviceNumber: "F123" }] });
-  assert.equal(view.renderBoardingPasses(content), "");
+  const html = view.renderBoardingPasses(content);
+  assert.equal((html.match(/mini-boarding-pass--empty/g) || []).length, 2);
+  assert.doesNotMatch(html, /F123/);
 });
 
 test("unclassified original flight data remains available in the normal travel archive", () => {
@@ -128,7 +130,7 @@ test("unclassified original flight data remains available in the normal travel a
   assert.match(html, /上海 → 杭州/);
   assert.match(html, /未分类方向/);
   assert.match(html, /data-journey-detail="legacy-journey"/);
-  assert.equal(view.renderBoardingPasses(content, []), "");
+  assert.doesNotMatch(view.renderBoardingPasses(content, []), /CA123/);
 });
 
 test("mobile boarding pass layout stacks directions and preserves narrow content width", () => {

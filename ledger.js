@@ -456,15 +456,17 @@
     }
     const apiBase = rawApiBase.replace(/\/+$/, "") || "/";
     const endpoint = `${apiBase}/${encodeURIComponent(tripId)}?collections=bills%2Ctravelers`;
+    async function load() {
+      const response = await fetch(endpoint, { cache: "no-store" });
+      if (!response.ok) throw new Error(`API ${response.status}`);
+      previous = await response.json();
+      return previous;
+    }
     return {
       mode: "d1",
-      async load() {
-        const response = await fetch(endpoint, { cache: "no-store" });
-        if (!response.ok) throw new Error(`API ${response.status}`);
-        previous = await response.json();
-        return previous;
-      },
+      load,
       async save(next) {
+        if (!previous) await load();
         const changes = [];
         for (const collection of collections) {
           const before = new Map((previous?.[collection] || []).map((item) => [item.id, item]));
@@ -2030,6 +2032,16 @@
       ? String(ledgerAdapter.mode || "custom")
       : persistence.mode;
     let stored = null;
+    if (ledgerPersistenceMode === "d1") {
+      try {
+        const localSnapshot = await createLocalStorageAdapter(ledgerTripId, persistence.localOptions).load();
+        if (localSnapshot && ((localSnapshot.bills || []).length || (localSnapshot.travelers || []).length)) {
+          notice = "检测到本机保留的旧账本资料；它不会自动合并或覆盖云端账本，原本地数据仍保留在此设备。";
+        }
+      } catch (error) {
+        console.warn("TravelLedger could not inspect preserved local ledger data", error);
+      }
+    }
     try {
       stored = await Promise.resolve(ledgerAdapter.load({ tripId: ledgerTripId }));
     } catch (error) {

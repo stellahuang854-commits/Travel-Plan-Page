@@ -21,13 +21,16 @@
   }
 
   function renderBoardingPasses(content, travelers = []) {
-    if (!content) return "";
+    content = content || { transportRecords: [] };
     const travelerMap = new Map((Array.isArray(travelers) ? travelers : []).map((traveler) => [String(traveler.id), traveler.name || ""]));
     const transportLabels = Object.freeze({ flight: "Flight", "high-speed-rail": "High-speed rail", train: "Train", metro: "Metro", "bus-coach": "Bus/Coach", "ferry-boat": "Ferry/Boat", "taxi-ride-hailing": "Taxi/Ride-hailing", "rental-car-driving": "Rental car/Driving", walking: "Walking", bicycle: "Bicycle", other: "Other" });
     return ["outbound", "return"].map((role) => {
       const entries = (content.transportRecords || []).filter((record) => window.TravelContentStore.journeyRoleFor(record) === role)
         .flatMap((record) => window.TravelContentStore.normalizePassengerJourneys(record).map((journey) => ({ record, journey })));
-      if (!entries.length) return "";
+      if (!entries.length) {
+        const label = role === "outbound" ? "去程" : "回程";
+        return `<button type="button" class="mini-boarding-pass mini-boarding-pass--empty" data-add-transport="${role}"><span class="mini-boarding-pass__top"><b>${label}</b><span>PASSENGER JOURNEYS</span><i aria-hidden="true">✳</i></span><span class="mini-boarding-pass__empty">尚未添加 · 添加${label}交通</span></button>`;
+      }
       const rows = entries.map(({ record, journey }) => {
         const passengers = [...new Set([...(journey.travelerIds || []).map((id) => travelerMap.get(String(id))).filter(Boolean), journey.passenger, journey.passengerName].filter(Boolean))].join("、") || "同行者待选择";
         const detail = [transportLabels[journey.type] || journey.type || transportLabels[record.type], journey.serviceNumber || journey.flightNumber, [journey.from, journey.to].filter(Boolean).join(" → "), [journey.date, journey.startTime, journey.endTime].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
