@@ -157,6 +157,22 @@
 
   function travelerOptions() { return window.TravelLedger?.getSnapshot?.()?.travelers || []; }
 
+  function refreshTravelerSelectors(event) {
+    if (!context || String(event?.detail?.tripId || "") !== String(context.data.metadata.tripId)) return;
+    const travelers = travelerOptions();
+    document.querySelectorAll('#travel-content-panel [data-journey-field="travelerIds"]').forEach((select) => {
+      const selectedIds = new Set([...select.selectedOptions].map((option) => option.value));
+      select.innerHTML = travelers.map((person) => `<option value="${esc(person.id)}"${selectedIds.has(String(person.id)) ? " selected" : ""}>${esc(person.name || "同行者")}</option>`).join("");
+    });
+    document.querySelectorAll("#travel-content-panel .travel-editor-hint").forEach((hint) => {
+      if (hint.textContent.includes("尚无同行者名单")) hint.remove();
+    });
+    const fieldset = document.querySelector("#travel-content-panel .passenger-journey-editor");
+    if (fieldset && !travelers.length && !fieldset.querySelector(".travel-editor-hint")) {
+      fieldset.insertAdjacentHTML("beforeend", '<p class="travel-editor-hint">尚无同行者名单；可先在 AA 记账中添加同行者，再回此处选择。</p>');
+    }
+  }
+
   function passengerJourneyFieldset(journey = {}, index = 0) {
     const travelers = travelerOptions();
     const selectedIds = new Set(journey.travelerIds || []);
@@ -654,6 +670,7 @@
 
   async function init(options) {
     context = options;
+    window.addEventListener("travel-ledger:travelers-changed", refreshTravelerSelectors);
     store = options.cloudStorage
       ? window.TravelContentStore.createCloudStore(options.data.metadata.tripId, options.data.config.persistence.apiBase || "/api/trip")
       : window.TravelContentStore.createStore(options.data.metadata.tripId);

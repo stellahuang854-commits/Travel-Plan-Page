@@ -49,6 +49,64 @@ test("foreign currency bills settle in manually converted base currency cents", 
   assert.deepEqual(shares(snapshot, snapshot.bills[0]), { a: 360, b: 360, c: 360 });
 });
 
+test("manual multi-currency rates preserve original amounts and convert exactly to CNY", () => {
+  const snapshot = data([
+    bill({ id: "cny", amount: 10000, original: 10000, currency: "CNY", participants: ["a", "b"] }),
+    { ...bill({ id: "eur", amount: 0, original: 2000, currency: "EUR", participants: ["a", "b"] }), baseAmountCents: null, exchangeRate: "8.00", rateBaseCurrency: "CNY", splitMode: "equal" },
+    { ...bill({ id: "usd", amount: 0, original: 1000, currency: "USD", participants: ["b"], payer: "a" }), baseAmountCents: null, exchangeRate: "7.20", rateBaseCurrency: "CNY", splitMode: "equal" },
+    { ...bill({ id: "jpy", amount: 0, original: 1000, currency: "JPY", participants: ["a"] }), currencyExponent: 0, baseAmountCents: null, exchangeRate: "0.05", rateBaseCurrency: "CNY", splitMode: "equal" }
+  ]);
+  assert.equal(snapshot.bills.find((entry) => entry.id === "eur").originalAmountCents, 2000);
+  assert.equal(snapshot.bills.find((entry) => entry.id === "eur").baseAmountCents, 16000);
+  assert.equal(snapshot.bills.find((entry) => entry.id === "usd").baseAmountCents, 7200);
+  assert.equal(snapshot.bills.find((entry) => entry.id === "jpy").currencyExponent, 0);
+  assert.equal(snapshot.bills.find((entry) => entry.id === "jpy").baseAmountCents, 5000);
+  assert.equal(ledger.calculateStats(snapshot).totalCents, 10000 + 16000 + 7200 + 5000);
+});
+
+test("missing foreign exchange rate stays saved and is excluded from all settlement math", () => {
+  const snapshot = data([
+    bill({ id: "local", amount: 3000, participants: ["a", "b"], payer: "a" }),
+    { ...bill({ id: "unconverted", amount: 0, original: 2500, currency: "EUR", participants: ["b"], payer: "a" }), baseAmountCents: null, exchangeRate: "" }
+  ]);
+  const missing = snapshot.bills.find((entry) => entry.id === "unconverted");
+  assert.ok(missing, "unconverted expense remains in the snapshot");
+  assert.equal(missing.baseAmountCents, null);
+  assert.equal(ledger.calculateStats(snapshot).totalCents, 3000);
+  assert.deepEqual(shares(snapshot, missing), {});
+  assert.equal(ledger.calculateStats(snapshot).transfers.length, 1);
+});
+
+test("changing a saved manual rate recalculates the settlement without replacing original money", () => {
+  const billRecord = { ...bill({ original: 2000, currency: "EUR" }), baseAmountCents: null, exchangeRate: "8", rateBaseCurrency: "CNY" };
+  const first = data([billRecord]);
+  billRecord.exchangeRate = "9";
+  const second = data([billRecord]);
+  assert.equal(first.bills[0].baseAmountCents, 16000);
+  assert.equal(second.bills[0].baseAmountCents, 18000);
+  assert.equal(second.bills[0].originalAmountCents, 2000);
+  assert.equal(second.bills[0].currency, "EUR");
+});
+
+test("foreign equal, exact, proportional and partial splits are split in source currency then converted", () => {
+  const snapshot = data([
+    { ...bill({ id: "equal", amount: 0, original: 1001, currency: "EUR", participants: ["a", "b"] }), baseAmountCents: null, exchangeRate: "2" },
+    { ...bill({ id: "exact", amount: 0, original: 1000, currency: "EUR", participants: ["a", "c"], splitMode: "amount", splitValues: { a: 250, c: 750 } }), baseAmountCents: null, exchangeRate: "2" },
+    { ...bill({ id: "ratio", amount: 0, original: 1000, currency: "EUR", participants: ["a", "b", "c"], splitMode: "ratio", splitValues: { a: 1, b: 2, c: 1 } }), baseAmountCents: null, exchangeRate: "2" }
+  ]);
+  assert.deepEqual(shares(snapshot, snapshot.bills[0]), { a: 1002, b: 1000 }, "the one-cent source-currency remainder is allocated before conversion");
+  assert.deepEqual(shares(snapshot, snapshot.bills[1]), { a: 500, c: 1500 });
+  assert.deepEqual(shares(snapshot, snapshot.bills[2]), { a: 500, b: 1000, c: 500 });
+});
+
+test("legacy manually converted bills and their exact splits remain readable", () => {
+  const snapshot = ledger.normalizeData({ settings: { baseCurrency: "CNY" }, travelers, bills: [
+    { id: "legacy", originalAmountCents: 2000, currencyExponent: 2, currency: "EUR", baseAmountCents: 16000, baseExponent: 2, payerId: "a", participantIds: ["a", "b"], splitMode: "amount", splitValues: { a: 6000, b: 10000 } }
+  ] });
+  assert.equal(snapshot.bills[0].baseAmountCents, 16000);
+  assert.deepEqual(shares(snapshot, snapshot.bills[0]), { a: 6000, b: 10000 });
+});
+
 test("amount input and legacy bill migration respect currencies with zero and three decimal places", () => {
   assert.equal(ledger.currencyExponent("JPY"), 0);
   assert.equal(ledger.currencyExponent("KWD"), 3);
@@ -127,9 +185,44 @@ test("D1 ledger bills and travelers survive cloud snapshot reloads and support a
     assert.equal(snapshot.bills[0].note, "edited");
     snapshot.bills = [];
     await ledger.createD1Adapter("cloud-ledger", { apiBase: "/api/trip" }).save(snapshot);
+    snapshot = ledger.normalizeData(await ledger.createD1Adapter("cloud-ledger", { apiBase: "/api/trip" }).load());
+    assert.deepEqual(snapshot.bills, []);
+    snapshot.travelers.find((person) => person.id === "a").name = "Updated A";
+    snapshot.travelers = snapshot.travelers.filter((person) => person.id !== "b");
+    await ledger.createD1Adapter("cloud-ledger", { apiBase: "/api/trip" }).save(snapshot);
     const afterDelete = ledger.normalizeData(await ledger.createD1Adapter("cloud-ledger", { apiBase: "/api/trip" }).load());
-    assert.deepEqual(afterDelete.bills, []);
-    assert.deepEqual(afterDelete.travelers.map((person) => person.id), ["a", "b"]);
+    assert.deepEqual(afterDelete.travelers.map((person) => [person.id, person.name]), [["a", "Updated A"]]);
+  } finally { global.fetch = previousFetch; }
+});
+
+test("D1 round trip preserves base currency, original currency amount, and manual exchange rate", async () => {
+  const previousFetch = global.fetch;
+  let cloud = { version: 1, settings: { baseCurrency: "CNY", commonCurrencies: ["EUR"], lastCurrency: "EUR" }, travelers: [{ id: "a", name: "A" }], bills: [], todos: [], tickets: [] };
+  global.fetch = async (_url, init = {}) => {
+    if (init.method === "POST") {
+      for (const change of JSON.parse(init.body).changes) {
+        if (change.collection === "settings") cloud.settings = structuredClone(change.value);
+        else {
+          const collection = cloud[change.collection];
+          const index = collection.findIndex((item) => item.id === change.id);
+          if (index >= 0) collection[index] = structuredClone(change.value); else collection.push(structuredClone(change.value));
+        }
+      }
+    }
+    return { ok: true, async json() { return structuredClone(cloud); } };
+  };
+  try {
+    const adapter = ledger.createD1Adapter("currency-trip", { apiBase: "/api/trip" });
+    const snapshot = ledger.normalizeData(await adapter.load());
+    snapshot.settings.baseCurrency = "CNY";
+    snapshot.bills.push({ id: "eur-bill", originalAmountCents: 2000, currency: "EUR", currencyExponent: 2, baseExponent: 2, baseAmountCents: 16000, exchangeRate: "8", rateBaseCurrency: "CNY", payerId: "a", participantIds: ["a"], category: "餐饮", splitMode: "equal", splitValues: {} });
+    await adapter.save(snapshot);
+    const reloaded = ledger.normalizeData(await ledger.createD1Adapter("currency-trip", { apiBase: "/api/trip" }).load());
+    assert.equal(reloaded.settings.baseCurrency, "CNY");
+    assert.equal(reloaded.bills[0].originalAmountCents, 2000);
+    assert.equal(reloaded.bills[0].currency, "EUR");
+    assert.equal(reloaded.bills[0].exchangeRate, "8");
+    assert.equal(reloaded.bills[0].baseAmountCents, 16000);
   } finally { global.fetch = previousFetch; }
 });
 

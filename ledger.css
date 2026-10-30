@@ -256,6 +256,7 @@ body[data-active-view="ledger"] .topbar { background: rgba(242, 238, 230, .94); 
 .ledger-bill-amount { display: grid; justify-items: end; gap: 3px; text-align: right; }
 .ledger-bill-amount strong { font-size: 16px; font-weight: 760; }
 .ledger-bill-amount span { color: var(--lake); font-size: 10px; }
+.ledger-bill-amount .ledger-missing-rate { max-width: 190px; color: #8b6655; white-space: normal; }
 .ledger-bill-people { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 14px; margin-top: 11px; color: #756357; font-size: 10px; }
 .ledger-bill-payer, .ledger-bill-participants { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
 .ledger-bill-payer b, .ledger-bill-participants b { color: #68574b; font-weight: 680; }
@@ -266,6 +267,9 @@ body[data-active-view="ledger"] .topbar { background: rgba(242, 238, 230, .94); 
 .ledger-stats-overview { margin-top: 28px; padding: 18px 20px; }
 .ledger-stats-overview h2 { margin-top: 7px; font-size: clamp(26px, 8vw, 32px); line-height: 1; letter-spacing: -.045em; }
 .ledger-stats-overview > span { display: block; margin-top: 8px; color: #899697; font-size: 10px; }
+.ledger-currency-totals { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.ledger-currency-totals span { padding: 5px 8px; border: 1px solid rgba(73,56,46,.1); border-radius: 999px; color: var(--ink); background: #f8f5ef; font-size: 11px; }
+.ledger-stats-overview .ledger-setting-note { margin-top: 10px; }
 .ledger-settlement-section, .ledger-member-stats-section { margin-top: 30px; }
 .ledger-transfer-list { margin-top: 14px; overflow: hidden; }
 .ledger-transfer-row { min-height: 76px; display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 11px; padding: 12px 16px; border-top: 1px solid rgba(73,56,46,.1); }
@@ -390,6 +394,9 @@ body[data-active-view="ledger"] .topbar { background: rgba(242, 238, 230, .94); 
 .ledger-currency-option:hover, .ledger-currency-option[aria-current="true"] { color: var(--lake); background: #eee6dc; }
 .ledger-currency-option b { font: 760 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .ledger-currency-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ledger-currency-custom { display: grid; gap: 7px; padding: 9px 5px 4px; border-top: 1px solid rgba(73,56,46,.1); }
+.ledger-currency-custom .ledger-field-label { margin-bottom: 4px; }
+.ledger-currency-custom .ledger-input { min-height: 38px; }
 .ledger-field-amount .ledger-amount-input { min-height: 44px; padding: 0 12px; border: 1px solid rgba(73,56,46,.16); border-radius: 11px; background: #fffcf7; }
 .ledger-converted-field { padding-top: 14px; padding-bottom: 0; }
 .ledger-converted-input-wrap { padding: 0 12px; border: 1px solid rgba(73,56,46,.15); border-radius: 11px; background: #fffcf7; }
