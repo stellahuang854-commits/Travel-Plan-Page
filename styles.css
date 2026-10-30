@@ -310,6 +310,30 @@ body > main { position: relative; z-index: 1; }
 .travel-content-list { display: grid; gap: 10px; }
 .travel-content-list__heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 7px; }
 .travel-content-list__heading h3 { margin: 0; font-size: 16px; }
+.travel-content-display { display: grid; gap: 20px; margin-top: 18px; }
+.travel-archive-group { min-width: 0; padding-top: 14px; border-top: 1px solid var(--line); }
+.travel-archive-group h3 { margin: 0 0 6px; font-size: 17px; }
+.travel-archive-row { min-width: 0; padding: 13px 0; border-bottom: 1px solid var(--line); display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.travel-archive-row > div { min-width: 0; }
+.travel-archive-row strong { display: block; font-size: 14px; }
+.travel-archive-row p, .travel-archive-passenger p { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.travel-archive-row a { display: inline-block; margin-top: 7px; color: var(--lake); font-size: 12px; }
+.travel-archive-row button, .travel-archive-passenger button { flex: 0 0 auto; min-height: 38px; padding: 7px 11px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); background: var(--surface); font: inherit; font-size: 12px; cursor: pointer; }
+.travel-archive-passenger { min-width: 0; margin-top: 9px; padding: 9px 10px; border-left: 2px solid var(--lake); background: rgba(255,255,255,.3); display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.travel-archive-passenger p { margin: 0; }
+.passenger-journeys-editor { min-width: 0; margin: 0; padding: 13px; border: 1px solid var(--line); border-radius: var(--radius-md); }
+.passenger-journeys-editor legend { padding: 0 5px; color: var(--ink); font-size: 13px; font-weight: 700; }
+.passenger-journeys-editor > button, .passenger-journeys-editor [data-remove-passenger-journey] { min-height: 40px; margin-top: 10px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); background: var(--surface); font: inherit; cursor: pointer; }
+.passenger-journeys-editor [data-remove-passenger-journey] { color: var(--warning); }
+.mini-boarding-pass--groups { min-height: 128px; }
+.mini-boarding-pass__group-count { display: block; margin-top: 6px; color: #e0d4c3; font-size: 9px; }
+.mini-boarding-pass__traveler-list { position: relative; z-index: 1; margin: 7px 10px 0 0; padding: 0; list-style: none; }
+.mini-boarding-pass__traveler { min-width: 0; padding: 7px 0; border-top: 1px dashed rgba(220,237,237,.28); display: flex; align-items: flex-start; justify-content: space-between; gap: 7px; }
+.mini-boarding-pass__traveler > span { min-width: 0; }
+.mini-boarding-pass__traveler strong, .mini-boarding-pass__traveler small { display: block; overflow-wrap: anywhere; }
+.mini-boarding-pass__traveler strong { color: #fffcf7; font-size: 10px; }
+.mini-boarding-pass__traveler small { margin-top: 3px; color: #e0d4c3; font-size: 8px; line-height: 1.4; }
+.mini-boarding-pass__traveler button { flex: 0 0 auto; padding: 5px 6px; border: 1px solid rgba(255,255,255,.24); border-radius: 7px; color: #fffcf7; background: transparent; font: inherit; font-size: 9px; cursor: pointer; }
 .travel-content-list__heading > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
 .travel-content-row { min-width: 0; padding: 13px 0; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .travel-content-row > div:first-child { min-width: 0; }
@@ -443,6 +467,10 @@ body > main { position: relative; z-index: 1; }
   .travel-content-row { align-items: flex-start; flex-direction: column; }
   .travel-content-row__actions { width: 100%; }
   .travel-content-row__actions button { flex: 1 1 auto; }
+  .travel-archive-row { flex-direction: column; }
+  .travel-archive-row > button, .travel-archive-passenger button { align-self: flex-start; }
+  .travel-archive-passenger { flex-direction: column; }
+  .mini-boarding-pass--groups { min-height: 124px; }
   .travel-editor-fields { grid-template-columns: minmax(0, 1fr); }
   .travel-content-dialog { width: calc(100% - 12px); max-height: min(94dvh, 900px); }
   .todo-edit-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }

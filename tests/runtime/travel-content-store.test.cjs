@@ -90,6 +90,35 @@ test("all supported transport types and itinerary links persist without copying 
   assert.throws(() => store.save({ ...reloaded, transportRecords: [...reloaded.transportRecords, { id: "bad-type", type: "spaceship" }] }), /交通方式无效/);
 });
 
+test("legacy transport fields normalize to one compatible passenger journey without mutating the source", () => {
+  const legacy = { id: "rail-old", type: "high-speed-rail", passenger: "同行者 A", serviceNumber: "G123", from: "上海虹桥", to: "杭州东", date: "2030-06-01", startTime: "09:00", endTime: "10:00", seat: "05A", note: "旧备注" };
+  const before = JSON.stringify(legacy);
+  const journeys = storeApi.normalizePassengerJourneys(legacy);
+  assert.equal(JSON.stringify(legacy), before);
+  assert.equal(journeys.length, 1);
+  assert.equal(journeys[0].serviceNumber, "G123");
+  assert.equal(journeys[0].passenger, "同行者 A");
+  assert.deepEqual(journeys[0].travelerIds, []);
+  assert.equal(storeApi.passengerJourneyAttachmentKey(legacy.id, journeys[0].id), "transport:rail-old:passenger:rail-old-passenger-1");
+  assert.ok(storeApi.passengerJourneyAttachmentKey("x".repeat(180), "y".repeat(180)).length <= 180);
+});
+
+test("multiple passenger journeys preserve shared riders and different services in one transport segment", () => {
+  const storage = memoryStorage();
+  const store = storeApi.createStore("multi-leg-trip", storage);
+  const content = store.load({ metadata: { tripId: "multi-leg-trip" } });
+  content.transportRecords.push({ id: "rail-day-1", type: "high-speed-rail", direction: "outbound", passengerJourneys: [
+    { id: "rail-same", type: "high-speed-rail", travelerIds: ["person-a", "person-b"], serviceNumber: "G123", from: "上海虹桥", to: "杭州东", startTime: "09:00", seat: "05A" },
+    { id: "rail-other", type: "train", travelerIds: ["person-c"], serviceNumber: "G456", from: "上海南", to: "杭州东", startTime: "09:30", seat: "02B" }
+  ] });
+  store.save(content);
+  const reloaded = store.load().transportRecords[0];
+  assert.deepEqual(reloaded.passengerJourneys.map((journey) => journey.travelerIds), [["person-a", "person-b"], ["person-c"]]);
+  assert.deepEqual(reloaded.passengerJourneys.map((journey) => journey.serviceNumber), ["G123", "G456"]);
+  assert.notEqual(storeApi.passengerJourneyAttachmentKey(reloaded.id, "rail-same"), storeApi.passengerJourneyAttachmentKey(reloaded.id, "rail-other"));
+  assert.throws(() => store.save({ ...store.load(), transportRecords: [{ ...reloaded, passengerJourneys: [{ id: "dup" }, { id: "dup" }] }] }), /重复的乘客行程 ID/);
+});
+
 test("existing public rail and transit records are surfaced without copying flights or rental cars", () => {
   const content = storeApi.createInitialContent({
     metadata: { tripId: "existing-transit" },

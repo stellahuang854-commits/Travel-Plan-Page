@@ -9,7 +9,7 @@ const output = process.env.PAGES_OUTPUT_DIR
 const files = [
   "index.html", "cloud-export.html", "styles.css", "ledger.css", "_headers", "_routes.json",
   "app.js", "ledger.js", "runtime-storage.js", "overview-map.js", "route-ui.js",
-  "ticket-pdf-preview.js", "site-navigation.js", "travel-content-store.js",
+  "ticket-pdf-preview.js", "site-navigation.js", "travel-content-store.js", "travel-content-view.js",
   "travel-attachment-store.js", "travel-content-editor.js", "travel-phase3-services.js",
   "cloud-client.js", "cloud-migration.js", "cloud-transfer.js"
 ];

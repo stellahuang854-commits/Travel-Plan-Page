@@ -53,13 +53,13 @@
   async function list(tripId, transportId) {
     if (cloudEnabled()) {
       const result = await cloudJson(await fetch(cloudEndpoint(tripId), { cache: "no-store" }), "读取云端附件");
-      return (result.attachments || []).filter((item) => item.transportId === String(transportId));
+      return (result.attachments || []).filter((item) => String(item.tripId) === String(tripId) && (transportId === undefined || item.transportId === String(transportId)));
     }
     const db = await database();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE, "readonly");
-      const request = tx.objectStore(STORE).index("by-transport").getAll(IDBKeyRange.only([String(tripId), String(transportId)]));
-      request.onsuccess = () => resolve((request.result || []).map(({ id, name, type, size, addedAt }) => ({ id, name, type, size, addedAt })));
+      const request = transportId === undefined ? tx.objectStore(STORE).getAll() : tx.objectStore(STORE).index("by-transport").getAll(IDBKeyRange.only([String(tripId), String(transportId)]));
+      request.onsuccess = () => resolve((request.result || []).filter((item) => item.tripId === String(tripId)).map(({ id, tripId: scopedTripId, transportId: scopedTransportId, name, type, size, addedAt }) => ({ id, tripId: scopedTripId, transportId: scopedTransportId, name, type, size, addedAt })));
       request.onerror = () => reject(request.error || new Error("无法读取交通凭证。"));
     });
   }

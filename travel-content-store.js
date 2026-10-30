@@ -71,6 +71,44 @@
     return "other";
   }
 
+  function passengerJourneyAttachmentKey(transportId, passengerJourneyId) {
+    const parent = String(transportId || "").trim();
+    const journey = String(passengerJourneyId || "").trim();
+    if (!parent || !journey) throw new Error("交通附件需要稳定的交通记录 ID 和乘客行程 ID。");
+    const readable = `transport:${parent}:passenger:${journey}`;
+    if (readable.length <= 180) return readable;
+    const source = `${parent}\u0000${journey}`;
+    const hash = (seed) => {
+      let value = seed;
+      for (let index = 0; index < source.length; index += 1) { value ^= source.charCodeAt(index); value = Math.imul(value, 16777619); }
+      return (value >>> 0).toString(16).padStart(8, "0");
+    };
+    return `transport:${hash(2166136261)}${hash(2246822519)}:${parent.slice(0, 32)}:${journey.slice(0, 32)}`;
+  }
+
+  function normalizePassengerJourneys(record, options = {}) {
+    const parent = record && typeof record === "object" ? record : {};
+    if (Array.isArray(parent.passengerJourneys)) {
+      return parent.passengerJourneys.map((journey, index) => ({
+        ...clone(journey || {}),
+        id: String(journey?.id || `${parent.id || "transport"}-passenger-${index + 1}`),
+        travelerIds: Array.isArray(journey?.travelerIds) ? journey.travelerIds.map(String) : [],
+        type: normalizeTransportType(journey?.type || parent.type),
+        ticketIds: Array.isArray(journey?.ticketIds) ? journey.ticketIds.map(String) : []
+      }));
+    }
+    const hasLegacyDetails = ["passenger", "serviceNumber", "flightNumber", "date", "arrivalDate", "from", "to", "startTime", "endTime", "seat", "note"]
+      .some((key) => parent[key] !== undefined && parent[key] !== null && String(parent[key]).trim());
+    if (!hasLegacyDetails && !options.ensureOne) return [];
+    return [{
+      id: `${parent.id || "transport"}-passenger-1`, travelerIds: [], type: normalizeTransportType(parent.type),
+      serviceNumber: parent.serviceNumber || parent.flightNumber || "", from: parent.from || "", to: parent.to || "",
+      date: parent.date || "", arrivalDate: parent.arrivalDate || parent.date || "", startTime: parent.startTime || "",
+      endTime: parent.endTime || "", seat: parent.seat || "", passenger: parent.passenger || "", note: parent.note || "",
+      ticketIds: Array.isArray(parent.ticketIds) ? parent.ticketIds.map(String) : []
+    }];
+  }
+
   function createInitialContent(data = {}) {
     const days = withStableIds(data.days, "day");
     const scheduleIds = new Set();
@@ -166,6 +204,17 @@
     for (const record of content.transportRecords) {
       if (record.ticketIds !== undefined && !Array.isArray(record.ticketIds)) throw new Error("交通记录的门票关联必须是列表。");
       if (record.dayIds !== undefined && !Array.isArray(record.dayIds)) throw new Error("交通记录的日期关联必须是列表。");
+      if (record.passengerJourneys !== undefined) {
+        if (!Array.isArray(record.passengerJourneys)) throw new Error("交通记录的乘客行程必须是列表。");
+        const journeyIds = new Set();
+        for (const journey of record.passengerJourneys) {
+          if (!journey || typeof journey !== "object" || Array.isArray(journey) || typeof journey.id !== "string" || !journey.id.trim() || journeyIds.has(journey.id)) throw new Error("交通记录中有无效或重复的乘客行程 ID。");
+          journeyIds.add(journey.id);
+          if (journey.travelerIds !== undefined && (!Array.isArray(journey.travelerIds) || journey.travelerIds.some((id) => typeof id !== "string"))) throw new Error("乘客行程的同行者必须是 ID 列表。");
+          if (journey.ticketIds !== undefined && !Array.isArray(journey.ticketIds)) throw new Error("乘客行程的票据关联必须是列表。");
+          if (!TRANSPORT_TYPES.includes(normalizeTransportType(journey.type || record.type))) throw new Error("乘客行程的交通方式无效。");
+        }
+      }
       if (record.sourceType && record.sourceId) {
         const sourceKey = `${record.sourceType}:${record.sourceId}`;
         if (transportSources.has(sourceKey)) throw new Error("同一航班或租车资料不能重复关联。");
@@ -246,7 +295,7 @@
     return Object.freeze({ tripId: id, mode: "d1", load, save, getRevision: () => revision });
   }
 
-  const api = Object.freeze({ VERSION, COLLECTIONS, TRANSPORT_TYPES, DEFAULT_CATEGORIES, createStore, createCloudStore, createInitialContent, normalizeTransportType, normalizeTodos, moveTasksBeforeCategoryDelete, validate, keyFor });
+  const api = Object.freeze({ VERSION, COLLECTIONS, TRANSPORT_TYPES, DEFAULT_CATEGORIES, createStore, createCloudStore, createInitialContent, normalizeTransportType, normalizePassengerJourneys, passengerJourneyAttachmentKey, normalizeTodos, moveTasksBeforeCategoryDelete, validate, keyFor });
   if (typeof window !== "undefined") window.TravelContentStore = api;
   if (typeof module === "object" && module.exports) module.exports = api;
 })();

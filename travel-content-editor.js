@@ -151,6 +151,40 @@
 
   function dayOptions() { return content.days.map((day) => [day.id, `${day.date || "未设日期"} ${day.title || `第 ${day.day || "—"} 天`}`]); }
 
+  function travelerOptions() { return window.TravelLedger?.getSnapshot?.()?.travelers || []; }
+
+  function passengerJourneyFieldset(journey = {}, index = 0) {
+    const travelers = travelerOptions();
+    const selectedIds = new Set(journey.travelerIds || []);
+    const options = travelers.map((person) => `<option value="${esc(person.id)}"${selectedIds.has(String(person.id)) ? " selected" : ""}>${esc(person.name || "同行者")}</option>`).join("");
+    const makeInput = (label, key, value = "", type = "text") => `<label class="travel-editor-field"><span>${label}</span><input data-journey-field="${key}" type="${type}" value="${esc(value)}"></label>`;
+    const typeOptions = transportTypes.map(([id, label]) => `<option value="${esc(id)}"${id === (journey.type || "train") ? " selected" : ""}>${esc(label)}</option>`).join("");
+    return `<fieldset class="passenger-journey-editor" data-passenger-journey-id="${esc(journey.id || "")}"><legend>乘客 / 班次 ${index + 1}</legend><div class="travel-editor-fields"><label class="travel-editor-field"><span>交通方式</span><select data-journey-field="type">${typeOptions}</select></label><label class="travel-editor-field"><span>同行者（可多选）</span><select data-journey-field="travelerIds" multiple size="3">${options}</select></label>${travelers.length ? "" : `<p class="travel-editor-hint">尚无同行者名单；可在 AA 记账中先添加同行者，再回此处选择。</p>`}${makeInput("其他乘客姓名（选填）", "passenger", journey.passenger || journey.passengerName || "")}${makeInput("航班号 / 车次 / 班次", "serviceNumber", journey.serviceNumber || journey.flightNumber || "")}${makeInput("出发地点 / 车站 / 机场", "from", journey.from || "")}${makeInput("到达地点 / 车站 / 机场", "to", journey.to || "")}${makeInput("出发日期", "date", journey.date || "", "date")}${makeInput("到达日期", "arrivalDate", journey.arrivalDate || journey.date || "", "date")}${makeInput("出发时间", "startTime", journey.startTime || "", "time")}${makeInput("到达时间", "endTime", journey.endTime || "", "time")}${makeInput("座位", "seat", journey.seat || "")}<label class="travel-editor-field"><span>备注</span><textarea data-journey-field="note" rows="2">${esc(journey.note || "")}</textarea></label></div><button type="button" data-remove-passenger-journey>删除此组</button></fieldset>`;
+  }
+
+  function readPassengerJourneys(form) {
+    return [...form.querySelectorAll("[data-passenger-journey-id]")].map((fieldset) => {
+      const value = (name) => fieldset.querySelector(`[data-journey-field="${name}"]`)?.value?.trim() || "";
+      const select = fieldset.querySelector('[data-journey-field="travelerIds"]');
+      const passenger = value("passenger");
+      const id = fieldset.dataset.passengerJourneyId || idFor("passenger-journey");
+      const previous = (editingValue?.passengerJourneys || []).find((journey) => journey.id === id) || {};
+      return { ...copy(previous), id, travelerIds: select ? [...select.selectedOptions].map((option) => option.value) : [], type: value("type") || "other", passenger, passengerName: passenger, serviceNumber: value("serviceNumber"), from: value("from"), to: value("to"), date: value("date"), arrivalDate: value("arrivalDate"), startTime: value("startTime"), endTime: value("endTime"), seat: value("seat"), note: value("note"), ticketIds: previous.ticketIds || editingValue?.ticketIds || [] };
+    });
+  }
+
+  function draftFromForm(form) {
+    const draft = { ...(editingValue || {}) };
+    for (const [key, value] of new FormData(form).entries()) {
+      if (["dayIds", "ticketIds"].includes(key) || form.querySelector(`[data-journey-field][name="${key}"]`)) continue;
+      draft[key] = String(value).trim();
+    }
+    draft.dayIds = form.elements.dayIds ? selectedValues(form.elements.dayIds) : draft.dayIds || [];
+    draft.ticketIds = form.elements.ticketIds ? selectedValues(form.elements.ticketIds) : draft.ticketIds || [];
+    draft.passengerJourneys = readPassengerJourneys(form);
+    return draft;
+  }
+
   function openForm(kind, record = null) {
     editing = { kind, id: record?.id || null };
     editingValue = record ? copy(record) : null;
@@ -213,7 +247,6 @@
           fields.push(field("出发时间", "startTime", existing.startTime || "", "time")); fields.push(field("到达时间", "endTime", existing.endTime || "", "time"));
           fields.push(field("航班号", "flightNumber", existing.flightNumber || ""));
         }
-        fields.push(field("乘客信息（选填）", "passenger", existing.passenger || "")); fields.push(field("座位号", "seat", existing.seat || ""));
         fields.push(field("行李信息", "baggage", existing.baggage || "")); fields.push(field("航站楼", "terminal", existing.terminal || ""));
         fields.push(field("登机口", "gate", existing.gate || "")); fields.push(field("登机时间", "boardingTime", existing.boardingTime || "", "time"));
         fields.push(textarea("备注", "note", existing.note));
@@ -221,16 +254,20 @@
         fields.push(`<p class="travel-editor-hint">租车详情继续使用原有租车资料；此处只建立每日行程和门票的关联，不复制航班或租车信息。</p>`);
         fields.push(`<input type="hidden" name="sourceId" value="rentalCar">`);
       } else {
+        fields.push(selectField("方向", "direction", [["outbound", "去程"], ["return", "返程"]], existing.direction || "outbound"));
         fields.push(field("出发日期", "date", existing.date, "date")); fields.push(field("到达日期", "arrivalDate", existing.arrivalDate || existing.date, "date"));
         fields.push(field("出发地点", "from", existing.from)); fields.push(field("到达地点", "to", existing.to));
         fields.push(field("出发时间", "startTime", existing.startTime, "time")); fields.push(field("到达时间", "endTime", existing.endTime, "time"));
         fields.push(field("车次 / 票号", "serviceNumber", existing.serviceNumber || existing.flightNumber || ""));
-        fields.push(field("乘客信息（选填）", "passenger", existing.passenger || ""));
-        fields.push(field("座位号", "seat", existing.seat || ""));
         fields.push(field("行李信息", "baggage", existing.baggage || ""));
       }
       fields.push(selectField("关联每日行程", "dayIds", dayOptions(), "", true));
       fields.push(selectField("相关门票", "ticketIds", ticketOptions(), "", true)); fields.push(textarea("备注", "note", existing.note));
+      const source = sourceFor(existing);
+      const normalized = window.TravelContentStore.normalizePassengerJourneys(existing, { ensureOne: true });
+      const journeys = Array.isArray(existing.passengerJourneys) ? normalized : normalized.length ? normalized : [{ id: idFor("passenger-journey"), type: typeValue, ...(source || {}) }];
+      if (!record && journeys.length === 1) journeys[0].id = idFor("passenger-journey");
+      fields.push(`<section class="passenger-journeys-editor"><h4>同行者班次</h4><p class="travel-editor-hint">多人乘坐同一班次可放在一组；不同班次请分别添加。</p><div data-passenger-journeys>${journeys.map(passengerJourneyFieldset).join("")}</div><button type="button" data-add-passenger-journey>＋ 添加另一组乘客 / 班次</button></section>`);
       if (linked) fields.push(`<p class="travel-editor-hint">关联的原始航班或租车资料不会被复制或覆盖。</p>`);
     }
     const panel = document.querySelector("#travel-content-panel");
@@ -277,6 +314,7 @@
       context.data.trip.startDate = dates[0] || null;
       context.data.trip.endDate = dates.at(-1) || null;
     }
+    window.TRAVEL_CONTENT = copy(content);
     context.onDataChanged?.(context.data);
   }
 
@@ -286,7 +324,9 @@
     const kind = form.dataset.editorForm;
     const data = new FormData(form);
     const current = editing?.id ? (editingValue || content[kind === "schedule" ? "days" : kind].flatMap((item) => kind === "schedule" ? item.schedule || [] : [item]).find((item) => item.id === editing.id)) : null;
+    const removedPassengerJourneyIds = kind === "transportRecords" && Array.isArray(current?.removedPassengerJourneyIds) ? [...current.removedPassengerJourneyIds] : [];
     const record = { ...(current || {}), id: current?.id || idFor(kind === "accommodations" ? "stay" : kind === "restaurants" ? "restaurant" : kind === "days" ? "day" : kind === "schedule" ? "item" : "transport") };
+    delete record.removedPassengerJourneyIds;
     for (const [key, value] of data.entries()) {
       if (["ticketIds", "transportIds", "dayIds"].includes(key)) continue;
       if (key === "locations" || key === "documentUrls") record[key] = String(value).split("\n").map((item) => item.trim()).filter(Boolean);
@@ -299,6 +339,7 @@
     if (form.elements.transportIds) record.transportIds = selectedValues(form.elements.transportIds);
     if (form.elements.dayIds) record.dayIds = selectedValues(form.elements.dayIds);
     if (kind === "transportRecords") {
+      record.passengerJourneys = readPassengerJourneys(form);
       record.type = String(data.get("type") || "other");
       if (record.type === "flight" && String(data.get("flightSourceMode")) === "linked") {
         record.sourceType = "flight";
@@ -356,7 +397,32 @@
         if (index >= 0) list[index] = { ...list[index], ...record }; else list.push(record);
       }
     }, "资料已保存。");
-    if (ok) { status("资料已保存。"); renderList(); }
+    if (ok) {
+      let cleanupFailed = false;
+      for (const journeyId of removedPassengerJourneyIds) {
+        try { await window.TravelAttachmentStore?.removeAll(context.data.metadata.tripId, window.TravelContentStore.passengerJourneyAttachmentKey(record.id, journeyId)); }
+        catch { cleanupFailed = true; }
+      }
+      status(cleanupFailed ? "资料已保存，但部分已删除班次的附件未能清理。" : "资料已保存。");
+      renderList();
+    }
+  }
+
+  async function removePassengerJourney(button) {
+    const form = button.form;
+    const journeyId = button.closest("[data-passenger-journey-id]")?.dataset.passengerJourneyId;
+    if (!form || !journeyId) return;
+    const draft = draftFromForm(form);
+    if (editing?.id && window.TravelAttachmentStore) {
+      try {
+        const key = window.TravelContentStore.passengerJourneyAttachmentKey(editing.id, journeyId);
+        const attachments = await window.TravelAttachmentStore.list(context.data.metadata.tripId, key);
+        if (attachments.length && !window.confirm(`删除这组乘客班次时，也会删除其关联的 ${attachments.length} 份附件。继续吗？`)) return;
+      } catch (error) { status(`无法检查班次附件，未删除此组：${error.message || "本地存储不可用"}`, true); return; }
+    }
+    draft.removedPassengerJourneyIds = [...new Set([...(draft.removedPassengerJourneyIds || []), journeyId])];
+    draft.passengerJourneys = (draft.passengerJourneys || []).filter((journey) => journey.id !== journeyId);
+    openForm("transportRecords", draft);
   }
 
   async function deleteRecord(id) {
@@ -443,6 +509,13 @@
   }
 
   function handleClick(event) {
+    const addJourney = event.target.closest("[data-add-passenger-journey]");
+    if (addJourney) { openForm("transportRecords", draftFromForm(addJourney.form)); return; }
+    const removeJourney = event.target.closest("[data-remove-passenger-journey]");
+    if (removeJourney) {
+      void removePassengerJourney(removeJourney);
+      return;
+    }
     const tab = event.target.closest("[data-travel-tab]");
     if (tab) { activeTab = tab.dataset.travelTab; selectedDayId = null; renderTabs(); renderList(); return; }
     if (event.target.closest("#travel-content-open")) { openDialog(); return; }
@@ -490,14 +563,9 @@
   function handleChange(event) {
     if (!["type", "flightSourceMode"].includes(event.target.name) || !event.target.closest('[data-editor-form="transportRecords"]')) return;
     const form = event.target.form;
-    const values = new FormData(form);
-    const draft = { ...(editingValue || {}), type: event.target.value };
-    for (const [key, value] of values.entries()) {
-      if (["dayIds", "ticketIds"].includes(key)) continue;
-      draft[key] = value;
-    }
-    draft.dayIds = selectedValues(form.elements.dayIds);
-    draft.ticketIds = selectedValues(form.elements.ticketIds);
+    const draft = draftFromForm(form);
+    if (event.target.name === "type") draft.type = event.target.value;
+    if (event.target.name === "flightSourceMode") draft.flightSourceMode = event.target.value;
     openForm("transportRecords", draft);
   }
 

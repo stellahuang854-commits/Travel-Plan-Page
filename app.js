@@ -335,19 +335,73 @@ function flightCard(journey, index) {
 
 function renderFlights() {
   const journeys = state.data.flightJourneys || [];
-  const customFlights = (window.TravelContentEditor?.getContent()?.transportRecords || []).filter((record) => record.type === "flight" && !record.sourceType);
+  const currentContent = window.TravelContentEditor?.getContent();
+  const transportRecords = currentContent?.transportRecords || [];
+  const customFlights = transportRecords.filter((record) => record.type === "flight" && !record.sourceType);
   const section = $("#flights");
-  if (section) section.hidden = !moduleEnabled("flights") && !(journeys.length || customFlights.length);
+  const directionalGroups = ["outbound", "return"].map((direction) => transportRecords
+    .filter((record) => transportDirection(record) === direction)
+    .flatMap((record) => window.TravelContentStore.normalizePassengerJourneys(record).map((passengerJourney) => ({ record, passengerJourney }))));
+  if (section) section.hidden = !moduleEnabled("flights") && !(journeys.length || customFlights.length || directionalGroups.some((group) => group.length));
   const navigationLink = document.querySelector('.travel-navigation-menu [data-module="flights"]');
   if (navigationLink) navigationLink.hidden = section?.hidden ?? true;
   const navigation = $("#travel-navigation");
   if (navigation) navigation.hidden = ![...document.querySelectorAll(".travel-navigation-menu [data-module]")].some((link) => !link.hidden);
   const customOutbound = customFlights.find((record) => record.direction === "outbound");
   const customReturn = customFlights.find((record) => record.direction === "return");
-  const outbound = journeys[0] || (customOutbound ? { ...customOutbound, customRecord: customOutbound } : null);
-  const inbound = journeys[1] || (customReturn ? { ...customReturn, customRecord: customReturn } : null);
+  const defaultOutbound = journeys[0] || (customOutbound ? { ...customOutbound, customRecord: customOutbound } : null);
+  const defaultInbound = journeys[1] || (customReturn ? { ...customReturn, customRecord: customReturn } : null);
   $("#flight-index").hidden = true;
-  $("#flight-carousel").innerHTML = [outbound, inbound].map((journey, index) => miniBoardingPass(journey, index)).join("");
+  $("#flight-carousel").innerHTML = [0, 1].map((index) => {
+    const direction = index === 0 ? "outbound" : "return";
+    const baseJourney = index === 0 ? defaultOutbound : defaultInbound;
+    const groups = directionalGroups[index];
+    if (!groups.length) return miniBoardingPass(baseJourney, index);
+    const hasLinkedJourney = groups.some(({ record }) => record.sourceType === "journey" || record.sourceType === "flight");
+    const entries = groups.map(({ record, passengerJourney }) => ({ record, passengerJourney }));
+    if (baseJourney && !baseJourney.customRecord && !hasLinkedJourney) entries.unshift(...baseJourneyPassengerRows(baseJourney));
+    return miniBoardingPassGroups(direction, entries, index);
+  }).join("");
+}
+
+function transportDirection(record) {
+  if (record?.direction === "outbound" || record?.direction === "return") return record.direction;
+  if (record?.sourceType === "journey") {
+    const index = state.data.flightJourneys.findIndex((journey) => journey.id === record.sourceId);
+    return index === 1 ? "return" : index === 0 ? "outbound" : "";
+  }
+  if (record?.sourceType === "flight") {
+    const flight = state.data.flights.find((item) => item.id === record.sourceId);
+    const index = state.data.flightJourneys.findIndex((journey) => journey.id === flight?.journeyId);
+    return index === 1 ? "return" : index === 0 ? "outbound" : "";
+  }
+  return "";
+}
+
+function baseJourneyPassengerRows(journey) {
+  if (journey.customRecord) return window.TravelContentStore.normalizePassengerJourneys(journey.customRecord).map((passengerJourney) => ({ record: journey.customRecord, passengerJourney }));
+  const flights = journeyFlights(journey.id);
+  if (!flights.length) return [];
+  const first = flights[0] || {};
+  const last = flights.at(-1) || {};
+  return [{ record: { id: `source-${journey.id}`, type: "flight", direction: "outbound" }, passengerJourney: {
+    id: `source-${journey.id}-passenger`, type: "flight", serviceNumber: flights.map((flight) => flight.flightNumber).filter(Boolean).join(" · "),
+    from: first.departure?.airportCode || first.departure?.city || "", to: last.arrival?.airportCode || last.arrival?.city || "",
+    date: first.departure?.date || "", startTime: first.departure?.time || "", endTime: last.arrival?.time || "",
+    passenger: "原始航班资料", note: "", travelerIds: []
+  } }];
+}
+
+function miniBoardingPassGroups(direction, entries, index) {
+  const travelerMap = new Map((window.TravelLedger?.getSnapshot()?.travelers || []).map((traveler) => [String(traveler.id), traveler.name]));
+  const label = direction === "outbound" ? "去程" : "返程";
+  const rows = entries.map(({ record, passengerJourney }) => {
+    const passengers = [...new Set([...(passengerJourney.travelerIds || []).map((id) => travelerMap.get(String(id))).filter(Boolean), passengerJourney.passenger, passengerJourney.passengerName].filter(Boolean))].join("、") || "同行者待选择";
+    const detail = [passengerJourney.type, passengerJourney.serviceNumber || passengerJourney.flightNumber, [passengerJourney.from, passengerJourney.to].filter(Boolean).join(" → "), [passengerJourney.date, passengerJourney.startTime, passengerJourney.endTime].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
+    const attachmentTransportId = record.id.startsWith("source-") ? `flight-journey:${record.id.slice("source-".length)}` : window.TravelContentStore.passengerJourneyAttachmentKey(record.id, passengerJourney.id);
+    return `<li class="mini-boarding-pass__traveler"><span><strong>${escapeHtml(passengers)}</strong><small>${escapeHtml(detail)}</small></span><button type="button" data-passenger-journey-detail="${escapeHtml(record.id)}" data-passenger-journey-id="${escapeHtml(passengerJourney.id)}" data-attachment-transport-id="${escapeHtml(attachmentTransportId)}" aria-label="查看${escapeHtml(passengers)}的班次和凭证">详情 ↗</button></li>`;
+  }).join("");
+  return `<div class="mini-boarding-pass mini-boarding-pass--groups"><span class="mini-boarding-pass__top"><b>${label}</b><span>PASSENGER JOURNEYS</span><i aria-hidden="true">✳</i></span><span class="mini-boarding-pass__group-count">${String(index + 1).padStart(2, "0")} / ${entries.length} 组行程</span><ul class="mini-boarding-pass__traveler-list">${rows}</ul></div>`;
 }
 
 function miniBoardingPass(journey, index) {
@@ -375,6 +429,26 @@ function miniBoardingPass(journey, index) {
   const status = flights.length ? journeyStatusAndTarget(flights) : null;
   const statusText = !flights.length ? "航班资料待补充" : status.complete ? "已抵达" : preciseCountdownText(status.target, "即将出发");
   return `<button type="button" class="mini-boarding-pass" data-journey-detail="${escapeHtml(journey.id)}" aria-haspopup="dialog" aria-controls="transport-detail-dialog"><span class="mini-boarding-pass__top"><b>${direction}</b><span>${escapeHtml(airline || "BOARDING PASS")}</span><i aria-hidden="true">✳</i></span><span class="mini-boarding-pass__route"><strong>${escapeHtml(from)}</strong><span aria-hidden="true"></span><strong>${escapeHtml(to)}</strong></span><span class="mini-boarding-pass__meta"><time>${escapeHtml(date)}</time><span>${escapeHtml(times)}</span></span><span class="mini-boarding-pass__flight">${escapeHtml(flightNo)} <span aria-hidden="true">↗</span></span><span class="mini-boarding-pass__status" data-countdown-journey="${escapeHtml(journey.id)}"${flights.length ? "" : " data-placeholder=\"true\""}>${escapeHtml(statusText)}</span></button>`;
+}
+
+let travelContentDisplayRevision = 0;
+function renderTravelContentDisplay() {
+  const display = $("#travel-content-display");
+  const content = window.TravelContentEditor?.getContent?.();
+  if (!display || !content || !window.TravelContentView) return;
+  const revision = ++travelContentDisplayRevision;
+  const attachmentCounts = {};
+  const render = () => {
+    display.innerHTML = window.TravelContentView.renderPublicContent(content, window.TravelLedger?.getSnapshot?.()?.travelers || [], attachmentCounts);
+    display.hidden = !display.innerHTML;
+  };
+  render();
+  if (!window.TravelAttachmentStore) return;
+  void window.TravelAttachmentStore.list(state.data.metadata.tripId).then((attachments) => {
+    if (revision !== travelContentDisplayRevision) return;
+    attachments.forEach((attachment) => { attachmentCounts[attachment.transportId] = (attachmentCounts[attachment.transportId] || 0) + 1; });
+    render();
+  }).catch((error) => console.warn("Travel archive attachments could not be listed", error));
 }
 
 function flightDetailLines(journey) {
@@ -447,6 +521,28 @@ function setupTransportDetailDialog() {
   const close = () => { previewUrls.forEach(URL.revokeObjectURL); previewUrls = []; dialog.close(); };
   $("#transport-detail-close").onclick = close;
   document.addEventListener("click", (event) => {
+    const passengerButton = event.target.closest("[data-passenger-journey-detail]");
+    if (passengerButton) {
+      const recordId = passengerButton.dataset.passengerJourneyDetail;
+      const journeyId = passengerButton.dataset.passengerJourneyId;
+      const record = window.TravelContentEditor?.getContent()?.transportRecords.find((item) => item.id === recordId);
+      const passengerJourney = record && window.TravelContentStore.normalizePassengerJourneys(record).find((item) => item.id === journeyId);
+      if (record && passengerJourney) {
+        const names = (window.TravelLedger?.getSnapshot?.()?.travelers || []).filter((person) => (passengerJourney.travelerIds || []).includes(String(person.id))).map((person) => person.name);
+        const transport = { ...passengerJourney, passenger: [...new Set([...names, passengerJourney.passenger, passengerJourney.passengerName].filter(Boolean))].join("、") };
+        const attachmentId = passengerButton.dataset.attachmentTransportId || window.TravelContentStore.passengerJourneyAttachmentKey(record.id, passengerJourney.id);
+        openTransportDetail({ transportId: attachmentId, type: passengerJourney.type || record.type, title: [passengerJourney.serviceNumber || passengerJourney.flightNumber || "交通班次", transport.passenger].filter(Boolean).join(" · "), transport, attachmentOnly: true });
+      } else if (!record && recordId.startsWith("source-")) {
+        const journey = state.data.flightJourneys.find((item) => item.id === recordId.slice("source-".length));
+        if (journey) openTransportDetail({ transportId: passengerButton.dataset.attachmentTransportId || `flight-journey:${journey.id}`, sourceType: "journey", sourceId: journey.id, type: "flight", title: "原始航班详情", journey });
+      }
+      return;
+    }
+    const archiveAttachment = event.target.closest("[data-archive-attachment]");
+    if (archiveAttachment) {
+      openTransportDetail({ transportId: archiveAttachment.dataset.archiveAttachment, type: "other", title: "旅行资料附件", attachmentOnly: true });
+      return;
+    }
     const journeyButton = event.target.closest("[data-journey-detail]");
     if (journeyButton) {
       const journey = state.data.flightJourneys.find((item) => item.id === journeyButton.dataset.journeyDetail);
@@ -482,7 +578,7 @@ function setupTransportDetailDialog() {
     const remove = event.target.closest("[data-attachment-delete]");
     if (remove) {
       if (!confirm("确定删除这份交通凭证吗？")) return;
-      try { await window.TravelAttachmentStore.remove(state.data.metadata.tripId, remove.dataset.attachmentDelete); await refreshTransportAttachments(dialog); }
+      try { await window.TravelAttachmentStore.remove(state.data.metadata.tripId, remove.dataset.attachmentDelete); await refreshTransportAttachments(dialog); renderTravelContentDisplay(); }
       catch (error) { setAttachmentStatus(dialog, `删除失败：${error.message || "本地存储不可用"}`, true); }
       return;
     }
@@ -499,6 +595,7 @@ function setupTransportDetailDialog() {
       status.textContent = replaceId ? "凭证已替换。" : `已保存 ${input.files.length} 份凭证。`;
       for (const file of [...input.files].slice(1)) await window.TravelAttachmentStore.add(state.data.metadata.tripId, dialog.dataset.transportId, file);
       await refreshTransportAttachments(dialog);
+      renderTravelContentDisplay();
     } catch (error) { status.textContent = `附件保存失败：${error.message || "本地存储空间不足"}`; status.classList.add("is-error"); }
     finally { input.value = ""; }
   });
@@ -1471,6 +1568,7 @@ async function init() {
           if (moduleEnabled("itinerary")) renderTimeline();
           renderFlights();
           renderHero();
+          renderTravelContentDisplay();
         }
       });
       setupTransportDetailDialog();
@@ -1494,7 +1592,10 @@ async function init() {
     if (moduleEnabled("todo")) renderTravelPrep();
     if (moduleEnabled("ledger")) {
       await window.TravelLedger?.init?.({ tripId: state.data.metadata.tripId, config: state.config });
+      $("#ledger-root")?.addEventListener("travel-ledger:changed", () => { renderFlights(); renderTravelContentDisplay(); });
     }
+    renderFlights();
+    renderTravelContentDisplay();
     startCountdowns();
   } catch (error) {
     console.error("Travel data could not be loaded", error);
