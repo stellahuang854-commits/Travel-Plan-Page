@@ -332,8 +332,8 @@ body > main { position: relative; z-index: 1; }
 .mini-boarding-pass__traveler > span { min-width: 0; }
 .mini-boarding-pass__traveler strong, .mini-boarding-pass__traveler small { display: block; overflow-wrap: anywhere; }
 .mini-boarding-pass__traveler strong { color: #fffcf7; font-size: 10px; }
-.mini-boarding-pass__traveler small { margin-top: 3px; color: #e0d4c3; font-size: 8px; line-height: 1.4; }
-.mini-boarding-pass__traveler button { flex: 0 0 auto; padding: 5px 6px; border: 1px solid rgba(255,255,255,.24); border-radius: 7px; color: #fffcf7; background: transparent; font: inherit; font-size: 9px; cursor: pointer; }
+.mini-boarding-pass__traveler small { margin-top: 3px; color: #e0d4c3; font-size: 9px; line-height: 1.45; }
+.mini-boarding-pass__traveler button { flex: 0 0 auto; min-height: 36px; padding: 5px 8px; border: 1px solid rgba(255,255,255,.24); border-radius: 7px; color: #fffcf7; background: transparent; font: inherit; font-size: 10px; cursor: pointer; }
 .travel-content-list__heading > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
 .travel-content-row { min-width: 0; padding: 13px 0; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .travel-content-row > div:first-child { min-width: 0; }
@@ -374,6 +374,7 @@ body > main { position: relative; z-index: 1; }
 
 /* Compact outbound / return boarding passes stay in the homepage's original palette. */
 .flight-carousel { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; overflow: visible; }
+.flight-carousel--single { grid-template-columns: minmax(0, 1fr); }
 .mini-boarding-pass { position: relative; min-width: 0; min-height: 128px; padding: 12px 13px 10px; border: 1px solid rgba(255,255,255,.16); border-radius: 13px; color: #fffcf7; background: linear-gradient(135deg, #49382e, #49382e); text-align: left; cursor: pointer; overflow: hidden; }
 .mini-boarding-pass::after { content: ""; position: absolute; top: 39px; bottom: 10px; right: 0; border-right: 1px dashed rgba(220,237,237,.38); }
 .mini-boarding-pass__top { display: flex; align-items: center; gap: 7px; color: #d6c6b4; font-size: 9px; letter-spacing: .1em; text-transform: uppercase; }
@@ -448,7 +449,7 @@ body > main { position: relative; z-index: 1; }
 #place-map-preview { min-height: 0; flex: 1 1 auto; display: flex; flex-direction: column; }
 #place-map-provider-note { min-height: 35vh; margin: 0; padding: 22px; display: grid; place-items: center; color: var(--muted); text-align: center; font-size: 13px; line-height: 1.6; }
 @media (max-width: 600px) {
-  .flight-carousel { gap: 7px; }
+  .flight-carousel { grid-template-columns: minmax(0, 1fr); gap: 7px; }
   .mini-boarding-pass { min-height: 124px; padding: 10px 9px; border-radius: 11px; }
   .mini-boarding-pass__top { font-size: 8px; }
   .mini-boarding-pass__route { grid-template-columns: minmax(0,1fr) minmax(12px,.35fr) minmax(0,1fr); gap: 4px; }
@@ -471,6 +472,7 @@ body > main { position: relative; z-index: 1; }
   .travel-archive-row > button, .travel-archive-passenger button { align-self: flex-start; }
   .travel-archive-passenger { flex-direction: column; }
   .mini-boarding-pass--groups { min-height: 124px; }
+  .mini-boarding-pass__traveler small { font-size: 10px; }
   .travel-editor-fields { grid-template-columns: minmax(0, 1fr); }
   .travel-content-dialog { width: calc(100% - 12px); max-height: min(94dvh, 900px); }
   .todo-edit-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }

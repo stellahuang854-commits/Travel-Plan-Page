@@ -36,6 +36,7 @@ test("D1 content endpoint snapshot, rather than the static trip package, feeds t
   const previousFetch = global.fetch;
   let revision = 4;
   let remoteContent = emptyContent("cloud-trip");
+  remoteContent.metadata = { title: "Initial cloud title" };
   remoteContent.restaurants.push({ id: "remote-restaurant", name: "Saved remotely" });
   global.fetch = async (_url, options = {}) => {
     if (options.method === "PUT") {
@@ -50,15 +51,91 @@ test("D1 content endpoint snapshot, rather than the static trip package, feeds t
     const packageTemplate = { metadata: { tripId: "cloud-trip" }, restaurants: [{ id: "static-old", name: "Old static package" }] };
     const loaded = await firstDevice.load(packageTemplate);
     assert.equal(loaded.restaurants[0].name, "Saved remotely");
+    loaded.metadata.title = "Edited title from this device";
     loaded.accommodations.push({ id: "stay-cloud", name: "Saved in D1" });
     await firstDevice.save(loaded);
     const secondDevice = store.createCloudStore("cloud-trip");
     const afterReload = await secondDevice.load(packageTemplate);
+    assert.equal(afterReload.metadata.title, "Edited title from this device");
     const html = view.renderPublicContent(afterReload);
     assert.match(html, /Saved in D1/);
     assert.match(html, /Saved remotely/);
     assert.doesNotMatch(html, /Old static package/);
   } finally { global.fetch = previousFetch; }
+});
+
+test("older D1 content without a title falls back to the existing package metadata title", async () => {
+  const previousFetch = global.fetch;
+  const legacy = emptyContent("cloud-legacy");
+  delete legacy.metadata;
+  global.fetch = async () => new Response(JSON.stringify({ revision: 1, content: legacy }), { status: 200, headers: { "content-type": "application/json" } });
+  try {
+    const cloudStore = store.createCloudStore("cloud-legacy");
+    const loaded = await cloudStore.load({ metadata: { tripId: "cloud-legacy", title: "Original metadata name" } });
+    assert.equal(loaded.metadata.title, "Original metadata name");
+    assert.deepEqual(loaded.connections, []);
+  } finally { global.fetch = previousFetch; }
+});
+
+test("homepage boarding passes show only explicit outbound and return passenger journeys", () => {
+  const content = emptyContent();
+  content.transportRecords.push(
+    { id: "outbound-record", type: "high-speed-rail", journeyRole: "outbound", passengerJourneys: [
+      { id: "out-a", type: "high-speed-rail", travelerIds: ["a"], serviceNumber: "G123", from: "上海虹桥", to: "杭州东", date: "2030-08-01", startTime: "09:00", endTime: "09:45" },
+      { id: "out-b", type: "train", travelerIds: ["b"], serviceNumber: "G456", from: "南京南", to: "杭州东", date: "2030-08-01", startTime: "10:00", endTime: "11:10" }
+    ] },
+    { id: "return-record", type: "train", journeyRole: "return", passengerJourneys: [
+      { id: "return-a", type: "train", travelerIds: ["a", "b"], serviceNumber: "G789", from: "杭州东", to: "上海虹桥", startTime: "15:00", endTime: "16:00" },
+      { id: "return-b", type: "train", travelerIds: ["c"], serviceNumber: "G790", from: "杭州东", to: "南京南", startTime: "16:00", endTime: "17:10" }
+    ] },
+    { id: "other-record", type: "metro", journeyRole: "other", passengerJourneys: [{ id: "other-leg", type: "metro", serviceNumber: "M1" }] },
+    { id: "legacy-unmarked", type: "flight", sourceType: "flight", sourceId: "old-flight", passengerJourneys: [{ id: "unmarked-leg", type: "flight", serviceNumber: "OLD1" }] }
+  );
+  const travelers = [{ id: "a", name: "同行者 A" }, { id: "b", name: "同行者 B" }, { id: "c", name: "同行者 C" }];
+  const html = view.renderBoardingPasses(content, travelers);
+  assert.match(html, /去程/);
+  assert.match(html, /回程/);
+  assert.match(html, /同行者 A/);
+  assert.match(html, /同行者 B/);
+  assert.match(html, /上海虹桥 → 杭州东/);
+  assert.match(html, /南京南 → 杭州东/);
+  assert.match(html, /杭州东 → 南京南/);
+  assert.match(html, /G123/);
+  assert.match(html, /G456/);
+  assert.match(html, /G789/);
+  assert.match(html, /同行者 A、同行者 B/);
+  assert.equal((html.match(/mini-boarding-pass--groups/g) || []).length, 2);
+  assert.doesNotMatch(html, /OLD1|M1/);
+  assert.match(html, new RegExp(store.passengerJourneyAttachmentKey("outbound-record", "out-a")));
+  assert.match(html, new RegExp(store.passengerJourneyAttachmentKey("return-record", "return-b")));
+});
+
+test("a legacy record without journeyRole does not create an outbound or return boarding pass", () => {
+  const content = emptyContent();
+  content.transportRecords.push({ id: "legacy", type: "flight", sourceType: "flight", sourceId: "legacy-flight", passengerJourneys: [{ id: "leg", type: "flight", serviceNumber: "F123" }] });
+  assert.equal(view.renderBoardingPasses(content), "");
+});
+
+test("unclassified original flight data remains available in the normal travel archive", () => {
+  const content = emptyContent();
+  const sourceData = {
+    flights: [{ id: "legacy-flight-1", journeyId: "legacy-journey", flightNumber: "CA123", departure: { city: "上海", date: "2030-08-01", time: "09:00" }, arrival: { city: "杭州", time: "10:00" } }],
+    flightJourneys: [{ id: "legacy-journey" }]
+  };
+  const html = view.renderPublicContent(content, [], {}, sourceData);
+  assert.match(html, /航班资料（未分类）/);
+  assert.match(html, /CA123/);
+  assert.match(html, /上海 → 杭州/);
+  assert.match(html, /未分类方向/);
+  assert.match(html, /data-journey-detail="legacy-journey"/);
+  assert.equal(view.renderBoardingPasses(content, []), "");
+});
+
+test("mobile boarding pass layout stacks directions and preserves narrow content width", () => {
+  const css = fs.readFileSync(path.resolve(__dirname, "../../styles.css"), "utf8");
+  assert.match(css, /@media\s*\(max-width:\s*600px\)\s*\{[^}]*\.flight-carousel\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
+  assert.match(css, /\.mini-boarding-pass__traveler\s*\{[^}]*min-width:\s*0/s);
+  assert.match(css, /\.mini-boarding-pass__traveler\s+small\s*\{[^}]*overflow-wrap:\s*anywhere/s);
 });
 
 test("normal browse view keeps different passenger services and their attachment links separate", () => {

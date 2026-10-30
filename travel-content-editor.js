@@ -71,6 +71,10 @@
     const panel = document.querySelector("#travel-content-panel");
     if (!panel) return;
     editing = null;
+    if (activeTab === "tripInfo") {
+      panel.innerHTML = `<form class="travel-editor-form" data-trip-title-form><div class="travel-content-list__heading"><h3>旅行基本信息</h3></div><div class="travel-editor-fields">${field("旅行名称", "title", content.metadata?.title || "", "text", { required: true, maxlength: 120 })}</div><div class="travel-editor-actions"><button type="submit">保存名称</button></div></form>`;
+      return;
+    }
     if (activeTab === "todoCategories") {
       panel.innerHTML = `<div class="travel-content-list"><div class="travel-content-list__heading"><h3>To Do 分类</h3><button type="button" data-category-add>新增分类</button></div>${content.todoCategories.map((category) => row(category.name, "可编辑；删除时可将已有任务移动到其他分类。", category.id)).join("") || `<p>还没有分类。</p>`}</div>`;
       return;
@@ -233,6 +237,9 @@
       const linked = Boolean(existing.sourceType);
       const typeValue = existing.type || "train";
       fields.push(selectField("交通方式", "type", transportTypes, typeValue));
+      const role = window.TravelContentStore.journeyRoleFor(existing);
+      fields.push(selectField("首页行程方向", "journeyRole", [["outbound", "去程"], ["return", "回程"], ["other", "行程中交通 / 其他"]], role || (record ? "" : "other")));
+      fields.push(`<p class="travel-editor-hint">只有明确选择“去程”或“回程”的资料会显示在首页顶部；未分类的旧资料不会被自动判断。</p>`);
       if (typeValue === "flight") {
         const mode = existing.sourceType === "flight" ? "linked" : "new";
         fields.push(selectField("航班资料", "flightSourceMode", [["linked", "关联原有航班"], ["new", "新增航班记录"]], existing.flightSourceMode || mode));
@@ -240,7 +247,6 @@
           fields.push(selectField("选择原有航班", "sourceId", sourceFlights().map((flight) => [flight.id, flight.title]), existing.sourceId || ""));
           fields.push(`<p class="travel-editor-hint">关联后沿用原始航班路线与时间，不复制原始航班记录。</p>`);
         } else {
-          fields.push(selectField("方向", "direction", [["outbound", "去程"], ["return", "返程"]], existing.direction || "outbound"));
           fields.push(field("航空公司", "airline", existing.airline || ""));
           fields.push(field("出发机场", "from", existing.from || "")); fields.push(field("到达机场", "to", existing.to || ""));
           fields.push(field("出发日期", "date", existing.date || "", "date")); fields.push(field("到达日期", "arrivalDate", existing.arrivalDate || existing.date || "", "date"));
@@ -254,7 +260,6 @@
         fields.push(`<p class="travel-editor-hint">租车详情继续使用原有租车资料；此处只建立每日行程和门票的关联，不复制航班或租车信息。</p>`);
         fields.push(`<input type="hidden" name="sourceId" value="rentalCar">`);
       } else {
-        fields.push(selectField("方向", "direction", [["outbound", "去程"], ["return", "返程"]], existing.direction || "outbound"));
         fields.push(field("出发日期", "date", existing.date, "date")); fields.push(field("到达日期", "arrivalDate", existing.arrivalDate || existing.date, "date"));
         fields.push(field("出发地点", "from", existing.from)); fields.push(field("到达地点", "to", existing.to));
         fields.push(field("出发时间", "startTime", existing.startTime, "time")); fields.push(field("到达时间", "endTime", existing.endTime, "time"));
@@ -305,6 +310,8 @@
   }
 
   function applyToPage() {
+    context.data.metadata = context.data.metadata || {};
+    context.data.metadata.title = content.metadata?.title || "";
     context.data.accommodations = copy(content.accommodations);
     context.data.restaurants = copy(content.restaurants);
     context.data.days = copy(content.days);
@@ -341,10 +348,14 @@
     if (kind === "transportRecords") {
       record.passengerJourneys = readPassengerJourneys(form);
       record.type = String(data.get("type") || "other");
+      const journeyRole = window.TravelContentStore.normalizeJourneyRole(data.get("journeyRole"));
+      if (journeyRole) record.journeyRole = journeyRole;
+      else delete record.journeyRole;
+      delete record.direction;
       if (record.type === "flight" && String(data.get("flightSourceMode")) === "linked") {
         record.sourceType = "flight";
         if (!sourceFlights().some((flight) => flight.id === record.sourceId)) { status("请选择可关联的原有航班，或改为新增航班记录。", true); return; }
-        delete record.flightSourceMode; delete record.direction; delete record.date; delete record.arrivalDate; delete record.from; delete record.to; delete record.startTime; delete record.endTime; delete record.flightNumber; delete record.airline;
+        delete record.flightSourceMode; delete record.date; delete record.arrivalDate; delete record.from; delete record.to; delete record.startTime; delete record.endTime; delete record.flightNumber; delete record.airline;
       } else if (record.type === "flight") {
         delete record.sourceType; delete record.sourceId; delete record.flightSourceMode;
         const duplicateSource = sourceFlights().some((flight) => flight.flightNumber && record.flightNumber && flight.flightNumber.toLocaleLowerCase() === record.flightNumber.toLocaleLowerCase() && flight.date && flight.date === record.date);
@@ -406,6 +417,13 @@
       status(cleanupFailed ? "资料已保存，但部分已删除班次的附件未能清理。" : "资料已保存。");
       renderList();
     }
+  }
+
+  async function saveTripTitle(form) {
+    const title = String(new FormData(form).get("title") || "").trim();
+    if (!title) { status("请输入旅行名称。", true); form.elements.title?.focus(); return; }
+    const ok = await commit((next) => { next.metadata = { ...(next.metadata || {}), title }; }, "旅行名称已保存。");
+    if (ok) renderList();
   }
 
   async function removePassengerJourney(button) {
@@ -552,6 +570,8 @@
   }
 
   function handleSubmit(event) {
+    const titleForm = event.target.closest("[data-trip-title-form]");
+    if (titleForm) { event.preventDefault(); void saveTripTitle(titleForm); return; }
     const form = event.target.closest("[data-editor-form]");
     if (form) { event.preventDefault(); void saveForm(form); return; }
     const categoryForm = event.target.closest("[data-category-form]");

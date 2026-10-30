@@ -17,7 +17,7 @@ function memoryStorage() {
 }
 
 test("initial snapshots copy existing trip content and assign stable ids without changing source", () => {
-  const source = { metadata: { tripId: "trip-a" }, accommodations: [{ name: "Stay" }], restaurants: [{ name: "Meal" }], days: [{ day: 1, schedule: [{ time: "09:00" }] }] };
+  const source = { metadata: { tripId: "trip-a", title: "Original Trip Title" }, accommodations: [{ name: "Stay" }], restaurants: [{ name: "Meal" }], days: [{ day: 1, schedule: [{ time: "09:00" }] }] };
   const before = JSON.stringify(source);
   const first = storeApi.createInitialContent(source);
   const second = storeApi.createInitialContent(source);
@@ -25,6 +25,24 @@ test("initial snapshots copy existing trip content and assign stable ids without
   assert.equal(first.accommodations[0].id, second.accommodations[0].id);
   assert.equal(first.days[0].schedule[0].id, second.days[0].schedule[0].id);
   assert.equal(first.todoCategories.length, 10);
+  assert.equal(first.metadata.title, "Original Trip Title");
+});
+
+test("trip title persists across local reload and legacy snapshots use the existing metadata title", () => {
+  const storage = memoryStorage();
+  const store = storeApi.createStore("title-trip", storage);
+  const initial = store.load({ metadata: { tripId: "title-trip", title: "Template title" }, accommodations: [{ id: "stay-1", name: "Keep me" }] });
+  initial.metadata.title = "My updated trip";
+  store.save(initial);
+  const reloaded = store.load();
+  assert.equal(reloaded.metadata.title, "My updated trip");
+  assert.equal(reloaded.accommodations[0].name, "Keep me");
+
+  const old = storeApi.createInitialContent({ metadata: { tripId: "old-title-trip", title: "Old template title" } });
+  delete old.metadata;
+  const oldStore = storeApi.createStore("old-title-trip", storage);
+  storage.setItem(oldStore.storageKey, JSON.stringify(old));
+  assert.equal(oldStore.load({ metadata: { tripId: "old-title-trip", title: "Old template title" } }).metadata.title, "Old template title");
 });
 
 test("snapshots persist per trip and preserve unknown records from other collections", () => {
@@ -117,6 +135,25 @@ test("multiple passenger journeys preserve shared riders and different services 
   assert.deepEqual(reloaded.passengerJourneys.map((journey) => journey.serviceNumber), ["G123", "G456"]);
   assert.notEqual(storeApi.passengerJourneyAttachmentKey(reloaded.id, "rail-same"), storeApi.passengerJourneyAttachmentKey(reloaded.id, "rail-other"));
   assert.throws(() => store.save({ ...store.load(), transportRecords: [{ ...reloaded, passengerJourneys: [{ id: "dup" }, { id: "dup" }] }] }), /重复的乘客行程 ID/);
+});
+
+test("explicit journey roles persist, legacy direction remains explicit, and unmarked legacy transport stays unclassified", () => {
+  const storage = memoryStorage();
+  const store = storeApi.createStore("journey-role-trip", storage);
+  const content = store.load({ metadata: { tripId: "journey-role-trip" } });
+  content.transportRecords.push(
+    { id: "outbound", type: "high-speed-rail", journeyRole: "outbound", passengerJourneys: [{ id: "out-leg", type: "high-speed-rail", from: "上海虹桥", to: "杭州东" }] },
+    { id: "return", type: "train", journeyRole: "return", passengerJourneys: [{ id: "return-leg", type: "train", from: "杭州东", to: "南京南" }] },
+    { id: "other", type: "metro", journeyRole: "other" },
+    { id: "legacy-explicit", type: "flight", direction: "outbound" },
+    { id: "legacy-unmarked", type: "flight", sourceType: "flight", sourceId: "old-flight" }
+  );
+  const saved = store.save(content);
+  assert.equal(saved.transportRecords.find((item) => item.id === "outbound").journeyRole, "outbound");
+  assert.equal(storeApi.journeyRoleFor(saved.transportRecords.find((item) => item.id === "legacy-explicit")), "outbound");
+  assert.equal(storeApi.journeyRoleFor(saved.transportRecords.find((item) => item.id === "legacy-unmarked")), "");
+  assert.equal(storeApi.journeyRoleFor(saved.transportRecords.find((item) => item.id === "other")), "other");
+  assert.throws(() => store.save({ ...saved, transportRecords: [{ id: "bad-role", type: "train", journeyRole: "maybe" }] }), /方向无效/);
 });
 
 test("existing public rail and transit records are surfaced without copying flights or rental cars", () => {

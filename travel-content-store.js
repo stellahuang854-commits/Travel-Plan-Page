@@ -71,6 +71,15 @@
     return "other";
   }
 
+  function normalizeJourneyRole(value) {
+    const role = String(value || "").trim().toLowerCase();
+    return ["outbound", "return", "other"].includes(role) ? role : "";
+  }
+
+  function journeyRoleFor(record) {
+    return normalizeJourneyRole(record?.journeyRole) || normalizeJourneyRole(record?.direction);
+  }
+
   function passengerJourneyAttachmentKey(transportId, passengerJourneyId) {
     const parent = String(transportId || "").trim();
     const journey = String(passengerJourneyId || "").trim();
@@ -134,6 +143,7 @@
     return {
       version: VERSION,
       tripId: String(data.metadata?.tripId || ""),
+      metadata: { title: String(data.metadata?.title || "") },
       accommodations: withStableIds(data.accommodations, "stay"),
       transportRecords: existingTransit,
       restaurants: withStableIds(data.restaurants, "restaurant"),
@@ -164,6 +174,7 @@
   function validate(content, expectedTripId) {
     if (!content || typeof content !== "object" || Array.isArray(content)) throw new Error("旅行资料格式无效。");
     if (content.version !== VERSION || content.tripId !== expectedTripId) throw new Error("旅行资料版本或 tripId 不匹配。");
+    if (content.metadata !== undefined && (!content.metadata || typeof content.metadata !== "object" || Array.isArray(content.metadata) || (content.metadata.title !== undefined && typeof content.metadata.title !== "string"))) throw new Error("旅行基本信息格式无效。");
     for (const collection of COLLECTIONS) {
       if (!Array.isArray(content[collection])) throw new Error(`旅行资料 ${collection} 必须是列表。`);
       const ids = new Set();
@@ -202,6 +213,7 @@
     }
     const transportSources = new Set();
     for (const record of content.transportRecords) {
+      if (record.journeyRole !== undefined && !normalizeJourneyRole(record.journeyRole)) throw new Error("交通行程方向无效。");
       if (record.ticketIds !== undefined && !Array.isArray(record.ticketIds)) throw new Error("交通记录的门票关联必须是列表。");
       if (record.dayIds !== undefined && !Array.isArray(record.dayIds)) throw new Error("交通记录的日期关联必须是列表。");
       if (record.passengerJourneys !== undefined) {
@@ -238,6 +250,7 @@
       try { parsed = JSON.parse(serialized); }
       catch { throw new Error("本地旅行资料无法解析；为保护数据，未覆盖原内容。"); }
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && parsed.version === VERSION && parsed.connections === undefined) parsed.connections = [];
+      if (parsed && typeof parsed === "object" && (!parsed.metadata || typeof parsed.metadata !== "object" || typeof parsed.metadata.title !== "string")) parsed.metadata = { ...(parsed.metadata && typeof parsed.metadata === "object" ? parsed.metadata : {}), title: String(data?.metadata?.title || "") };
       validate(parsed, String(tripId));
       return clone(parsed);
     }
@@ -272,7 +285,9 @@
       const result = await response.json();
       revision = result.revision;
       const content = result.content || createInitialContent(data);
+      if (content && typeof content === "object" && content.version === VERSION && content.connections === undefined) content.connections = [];
       if (!content.tripId) content.tripId = id;
+      if (!content.metadata || typeof content.metadata !== "object" || typeof content.metadata.title !== "string") content.metadata = { ...(content.metadata && typeof content.metadata === "object" ? content.metadata : {}), title: String(data?.metadata?.title || "") };
       validate(content, id);
       return clone(content);
     }
@@ -295,7 +310,7 @@
     return Object.freeze({ tripId: id, mode: "d1", load, save, getRevision: () => revision });
   }
 
-  const api = Object.freeze({ VERSION, COLLECTIONS, TRANSPORT_TYPES, DEFAULT_CATEGORIES, createStore, createCloudStore, createInitialContent, normalizeTransportType, normalizePassengerJourneys, passengerJourneyAttachmentKey, normalizeTodos, moveTasksBeforeCategoryDelete, validate, keyFor });
+  const api = Object.freeze({ VERSION, COLLECTIONS, TRANSPORT_TYPES, DEFAULT_CATEGORIES, createStore, createCloudStore, createInitialContent, normalizeTransportType, normalizeJourneyRole, journeyRoleFor, normalizePassengerJourneys, passengerJourneyAttachmentKey, normalizeTodos, moveTasksBeforeCategoryDelete, validate, keyFor });
   if (typeof window !== "undefined") window.TravelContentStore = api;
   if (typeof module === "object" && module.exports) module.exports = api;
 })();

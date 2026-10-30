@@ -8,19 +8,19 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>AI 旅行网页模板</title>
-  <link rel="stylesheet" href="styles.css?v=20261030-phase5-1">
+  <link rel="stylesheet" href="styles.css?v=20261031-phase5-2">
   <link rel="stylesheet" href="ledger.css?v=20261030-phase4-6">
-  <script src="travel-content-store.js?v=20261031-phase5-1" defer></script>
-  <script src="travel-content-view.js?v=20261031-phase5-1" defer></script>
+  <script src="travel-content-store.js?v=20261031-phase5-2" defer></script>
+  <script src="travel-content-view.js?v=20261031-phase5-2" defer></script>
   <script src="travel-attachment-store.js?v=20261031-phase5-1" defer></script>
-  <script src="travel-content-editor.js?v=20261031-phase5-1" defer></script>
+  <script src="travel-content-editor.js?v=20261031-phase5-2" defer></script>
   <script src="travel-phase3-services.js?v=20261030-phase3-2" defer></script>
   <script src="cloud-client.js?v=20261030-phase5-1" defer></script>
   <script src="cloud-migration.js?v=20261030-phase5-1" defer></script>
   <script src="runtime-storage.js?v=20260910-2" defer></script>
   <script src="overview-map.js?v=20260910-2" defer></script>
   <script src="route-ui.js?v=20260910-2" defer></script>
-  <script src="app.js?v=20261031-phase5-1" defer></script>
+  <script src="app.js?v=20261031-phase5-2" defer></script>
   <script src="ticket-pdf-preview.js?v=20260910-2" defer></script>
   <script src="ledger.js?v=20261030-phase4-1" defer></script>
   <script src="site-navigation.js?v=20260910-2" defer></script>
@@ -55,7 +55,7 @@
       <div class="section-heading">
         <div>
           <p class="section-kicker">BOARDING</p>
-          <h2 id="flights-title">航班行程</h2>
+          <h2 id="flights-title">去程与回程交通</h2>
         </div>
         <p class="section-index" id="flight-index" aria-live="polite">1 / 3</p>
       </div>
@@ -162,6 +162,7 @@
     </header>
     <div class="ticket-dialog__body">
       <nav class="travel-content-tabs" aria-label="旅行资料类别">
+        <button type="button" data-travel-tab="tripInfo">旅行信息</button>
         <button type="button" data-travel-tab="accommodations">住宿</button>
         <button type="button" data-travel-tab="restaurants">餐厅</button>
         <button type="button" data-travel-tab="transportRecords">交通</button>
