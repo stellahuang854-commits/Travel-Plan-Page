@@ -152,12 +152,6 @@ body[data-active-view="ledger"] .topbar { background: rgba(242, 238, 230, .94); 
 .ledger-page-header { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
 .ledger-page-header h1 { font-size: clamp(30px, 9vw, 42px); line-height: 1; letter-spacing: -.055em; font-weight: var(--weight-bold); }
 .ledger-header-actions { display: flex; align-items: center; gap: 5px; }
-html[data-trip-role="viewer"] .ledger-header-actions,
-html[data-trip-role="viewer"] [data-ledger-action="edit-bill"],
-html[data-trip-role="viewer"] [data-ledger-action="delete-bill"],
-html[data-trip-role="viewer"] [data-ledger-action="open-members"],
-html[data-trip-role="viewer"] [data-ledger-action="edit-member"],
-html[data-trip-role="viewer"] [data-ledger-action="delete-member"] { display: none !important; }
 .ledger-text-button, .ledger-icon-button {
   min-height: 42px; padding: 0 9px; border: 0; border-radius: 9px;
   color: var(--lake); background: transparent; cursor: pointer; font-size: 11px; font-weight: 740;

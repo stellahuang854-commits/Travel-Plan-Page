@@ -12,6 +12,7 @@ function memoryRepository() {
   let inviteCounter = 1;
   return {
     members, states, invites, attachments,
+    async getPublicTripId() { return [...states.entries()].find(([, value]) => value.state.package)?.[0] || null; },
     async getMembership(tripId, userId) { return members.get(`${tripId}:${userId}`) || null; },
     async getState(tripId) { const state = states.get(tripId); if (!state) throw new (await apiModule).ApiError(404, "trip_not_found"); return structuredClone(state); },
     async compareAndSwapState(tripId, revision, state, userId) { const current = states.get(tripId); if (!current || current.revision !== revision) return null; const next = { state: structuredClone(state), revision: revision + 1 }; states.set(tripId, next); return { revision: next.revision }; },
@@ -49,58 +50,32 @@ function request(path, method = "GET", user = "viewer", body = undefined, extraH
   return new Request(`https://travel.example.test${path}`, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 }
 
-test("unknown identities and guessed cross-trip IDs cannot read data", async () => {
+test("public single-trip API needs no Access identity and rejects guessed other trip IDs", async () => {
   const { createTravelApi } = await apiModule;
-  const handler = createTravelApi({ authenticate: async (req) => { const id = req.headers.get("x-test-user"); if (!id || id === "stranger") throw new (await apiModule).ApiError(401, "unauthorized"); return { id, email: `${id}@example.test` }; }, repository: memoryRepository(), bucket: makeBucket() });
+  const handler = createTravelApi({ repository: memoryRepository(), bucket: makeBucket() });
   assert.equal((await handler(request("/api/trip/trip-a?collections=todos"))).status, 200);
   assert.equal((await handler(request("/api/trip/trip-b?collections=todos"))).status, 404);
-  assert.equal((await handler(request("/api/trip/trip-a?collections=todos", "GET", "stranger"))).status, 401);
+  assert.equal((await handler(request("/api/session"))).status, 404);
+  assert.equal((await handler(request("/api/trip/trip-a/invitations"))).status, 404);
 });
 
-test("Cloudflare Access JWT requires a trusted RS256 signature, issuer, audience and expiry", async () => {
-  const { verifyAccessJwt } = await apiModule;
-  const pair = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]);
-  const jwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
-  jwk.kid = "test-key";
-  const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
-  const now = Date.now();
-  async function token(claimOverrides = {}) {
-    const head = encode({ alg: "RS256", kid: jwk.kid, typ: "JWT" });
-    const body = encode({ iss: "https://unit-test.cloudflareaccess.com", aud: ["private-app-aud"], sub: "person-1", email: "person@example.test", iat: Math.floor(now / 1000), exp: Math.floor(now / 1000) + 300, ...claimOverrides });
-    const signed = `${head}.${body}`;
-    const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", pair.privateKey, new TextEncoder().encode(signed));
-    return `${signed}.${Buffer.from(signature).toString("base64url")}`;
-  }
-  const env = { ACCESS_TEAM_DOMAIN: "unit-test.cloudflareaccess.com", ACCESS_AUD: "private-app-aud" };
-  const fetchJwks = async () => new Response(JSON.stringify({ keys: [jwk] }), { headers: { "content-type": "application/json" } });
-  const valid = await token();
-  assert.equal((await verifyAccessJwt(valid, env, fetchJwks, now)).email, "person@example.test");
-  await assert.rejects(verifyAccessJwt(await token({ aud: ["wrong-aud"] }), env, fetchJwks, now), /unauthorized/);
-  await assert.rejects(verifyAccessJwt(await token({ exp: Math.floor(now / 1000) - 1 }), env, fetchJwks, now), /unauthorized/);
-  const [head, body] = valid.split(".");
-  const forged = `${head}.${encode({ iss: "https://unit-test.cloudflareaccess.com", aud: ["private-app-aud"], sub: "attacker", exp: Math.floor(now / 1000) + 300 })}.${valid.split(".")[2]}`;
-  await assert.rejects(verifyAccessJwt(forged, env, fetchJwks, now), /unauthorized/);
-});
-
-test("viewer reads shared data but backend denies changes and attachment uploads", async () => {
+test("public API permits single-trip edits without fictitious role enforcement", async () => {
   const { createTravelApi } = await apiModule;
   const repository = memoryRepository();
   const bucket = makeBucket();
-  const handler = createTravelApi({ authenticate: async (req) => ({ id: req.headers.get("x-test-user"), email: "viewer@example.test" }), repository, bucket });
+  const handler = createTravelApi({ repository, bucket });
   const read = await handler(request("/api/trip/trip-a?collections=bills,travelers,todos"));
   assert.equal(read.status, 200);
   assert.equal((await read.json()).bills[0].id, "bill-a");
   const edit = await handler(request("/api/trip/trip-a?collections=todos", "POST", "viewer", { expectedRevision: 4, changes: [{ op: "upsert", collection: "todos", id: "todo-1", value: { id: "todo-1" } }] }, { "if-match": '"4"' }));
-  assert.equal(edit.status, 403);
-  const upload = await handler(request("/api/trip/trip-a/attachments", "POST", "viewer", undefined, { "content-type": "image/png", "x-attachment-type": "image/png", "x-attachment-size": "1" }));
-  assert.equal(upload.status, 403);
-  assert.equal(bucket.values.size, 0);
+  assert.equal(edit.status, 200);
+  assert.equal(repository.states.get("trip-a").state.runtime.todos[0].id, "todo-1");
 });
 
 test("global trip revision prevents stale multi-device writes", async () => {
   const { createTravelApi } = await apiModule;
   const repository = memoryRepository();
-  const handler = createTravelApi({ authenticate: async (req) => ({ id: req.headers.get("x-test-user") }), repository, bucket: makeBucket() });
+  const handler = createTravelApi({ repository, bucket: makeBucket() });
   const body = { expectedRevision: 4, changes: [{ op: "upsert", collection: "todos", id: "todo-1", value: { id: "todo-1", text: "Save me" } }] };
   const first = await handler(request("/api/trip/trip-a?collections=todos", "POST", "editor", body, { "if-match": '"4"' }));
   const stale = await handler(request("/api/trip/trip-a?collections=todos", "POST", "editor", body, { "if-match": '"4"' }));
@@ -109,27 +84,11 @@ test("global trip revision prevents stale multi-device writes", async () => {
   assert.deepEqual(repository.states.get("trip-a").state.runtime.todos, [{ id: "todo-1", text: "Save me" }]);
 });
 
-test("invitation tokens are one-time, role-bound, expiring, and revocable", async () => {
-  const { createTravelApi } = await apiModule;
-  const repository = memoryRepository();
-  const now = Date.parse("2026-10-30T12:00:00Z");
-  const handler = createTravelApi({ authenticate: async (req) => ({ id: req.headers.get("x-test-user"), email: `${req.headers.get("x-test-user")}@example.test` }), repository, bucket: makeBucket(), now: () => now });
-  const created = await handler(request("/api/trip/trip-a/invitations", "POST", "owner", { role: "editor", email: "new@example.test", expiresInDays: 2 }));
-  assert.equal(created.status, 201);
-  const invitation = await created.json();
-  const token = invitation.invitationUrl.split("#")[1];
-  const inspect = await handler(request("/api/invitations/inspect", "POST", "new", { token }));
-  assert.equal(inspect.status, 200);
-  assert.equal((await handler(request("/api/invitations/accept", "POST", "new", { token }))).status, 200);
-  assert.equal(repository.members.get("trip-a:new").role, "editor");
-  assert.equal((await handler(request("/api/invitations/accept", "POST", "new", { token }))).status, 404);
-});
-
-test("R2 objects are private, unguessable, and scoped by trip membership", async () => {
+test("R2 objects remain private and are only streamed through the single-trip function", async () => {
   const { createTravelApi } = await apiModule;
   const repository = memoryRepository();
   const bucket = makeBucket();
-  const handler = createTravelApi({ authenticate: async (req) => ({ id: req.headers.get("x-test-user") }), repository, bucket });
+  const handler = createTravelApi({ repository, bucket });
   const upload = new Request("https://travel.example.test/api/trip/trip-a/attachments", { method: "POST", headers: { origin: "https://travel.example.test", "x-test-user": "editor", "content-type": "image/png", "x-attachment-type": "image/png", "x-attachment-size": "3", "x-attachment-id": "attach-1", "x-attachment-name": "ticket.png", "x-transport-id": "flight-1" }, body: new Uint8Array([1, 2, 3]) });
   assert.equal((await handler(upload)).status, 201);
   const stored = repository.attachments.get("trip-a:attach-1");
@@ -142,16 +101,11 @@ test("R2 objects are private, unguessable, and scoped by trip membership", async
   assert.equal((await downloaded.arrayBuffer()).byteLength, 3);
 });
 
-test("migration is owner-only, trip-scoped, and refuses to overwrite imported data", async () => {
+test("local data migration endpoint is disabled for the public single-trip site", async () => {
   const { createTravelApi } = await apiModule;
   const repository = memoryRepository();
   repository.states.set("empty-trip", { revision: 0, state: { package: null, content: null, runtime: { version: 1, settings: null, bills: [], travelers: [], todos: [], tickets: [] } } });
-  repository.members.set("empty-trip:owner", { role: "owner", email: "owner@example.test" });
-  repository.members.set("empty-trip:editor", { role: "editor", email: "editor@example.test" });
-  const handler = createTravelApi({ authenticate: async (req) => ({ id: req.headers.get("x-test-user") }), repository, bucket: makeBucket() });
+  const handler = createTravelApi({ repository, bucket: makeBucket() });
   const bundle = { schemaVersion: "travel-plan-cloud-backup/v1", tripId: "empty-trip", package: { schemaVersion: "2.0-lite", metadata: { tripId: "empty-trip", title: "A trip" }, config: { schemaVersion: "1.0.0", modules: { flights: false, overview: false, itinerary: false, todo: false, driving: false, ledger: false } } }, runtime: { bills: [{ id: "bill-1" }] }, content: { version: 1, tripId: "empty-trip", accommodations: [], transportRecords: [], restaurants: [], days: [], todoCategories: [], connections: [] } };
-  assert.equal((await handler(request("/api/trip/empty-trip/migrations", "POST", "editor", bundle))).status, 403);
-  assert.equal((await handler(request("/api/trip/empty-trip/migrations", "POST", "owner", bundle))).status, 201);
-  assert.equal(repository.states.get("empty-trip").state.package.config.persistence.mode, "d1");
-  assert.equal((await handler(request("/api/trip/empty-trip/migrations", "POST", "owner", bundle))).status, 409);
+  assert.equal((await handler(request("/api/trip/trip-a/migrations", "POST", "owner", bundle))).status, 404);
 });

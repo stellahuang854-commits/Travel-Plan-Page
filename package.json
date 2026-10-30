@@ -10,6 +10,7 @@
     "build:map": "node scripts/build-map.mjs",
     "build:pages": "node scripts/build-pages.mjs",
     "deploy:pages": "npm run build:pages && npx wrangler pages deploy dist --project-name travel-plan-private",
+    "initialize:public-trip": "node scripts/initialize-public-trip.mjs",
     "validate": "node scripts/validate-lite.mjs",
     "test:runtime": "node --test tests/runtime/*.test.cjs",
     "preview": "node local-preview-server.mjs"

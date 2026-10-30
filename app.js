@@ -1438,12 +1438,6 @@ async function init() {
     state.data = await response.json();
     state.config = normalizeTripConfig(state.data.config);
     window.TRAVEL_PLAN_CONFIG = state.config;
-    if (state.config.persistence.mode === "d1") {
-      const identityResponse = await fetch(`/api/session?tripId=${encodeURIComponent(state.data.metadata.tripId)}`, { cache: "no-store" });
-      if (!identityResponse.ok) throw new Error(identityResponse.status === 403 || identityResponse.status === 404 ? "当前账号不属于此旅行，无法读取旅行资料。" : "私人访问身份验证失败。");
-      window.TRAVEL_ACCESS = await identityResponse.json();
-      document.documentElement.dataset.tripRole = window.TRAVEL_ACCESS.role;
-    }
     window.TRAVEL_PLAN_DATA = state.data;
     document.dispatchEvent(new CustomEvent("travel-data-ready", { detail: state.data }));
     applyModuleConfig();

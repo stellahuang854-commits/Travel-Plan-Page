@@ -538,21 +538,6 @@ body > main { position: relative; z-index: 1; }
 .todo-delete { min-width: 44px; min-height: 44px; padding: 0; border: 0; color: #9a7062; background: transparent; cursor: pointer; font-size: 10px; }
 .todo-empty { margin: 0; padding: 22px 0 8px; color: var(--muted); text-align: center; font-size: 11px; }
 
-/* Viewer affordances are hidden for clarity; API authorization remains authoritative. */
-html[data-trip-role="viewer"] .travel-content-row__actions,
-html[data-trip-role="viewer"] .travel-content-list__heading > div,
-html[data-trip-role="viewer"] .travel-editor-form,
-html[data-trip-role="viewer"] #todo-form,
-html[data-trip-role="viewer"] #todo-category-manage,
-html[data-trip-role="viewer"] .todo-actions,
-html[data-trip-role="viewer"] .todo-edit-form,
-html[data-trip-role="viewer"] .transport-detail-form,
-html[data-trip-role="viewer"] .transport-upload-button,
-html[data-trip-role="viewer"] .transport-attachment-list [data-attachment-replace],
-html[data-trip-role="viewer"] .transport-attachment-list [data-attachment-delete] { display: none !important; }
-html[data-trip-role="viewer"] .todo-item label { cursor: default; pointer-events: none; }
-html[data-trip-role="viewer"] .schedule-ticket__toggle { pointer-events: none; cursor: default; }
-html[data-trip-role="viewer"] [data-connection-edit] { pointer-events: none; opacity: .72; }
 
 @media (min-width: 700px) {
   .topbar { padding-inline: max(24px, calc((100vw - var(--content)) / 2)); }

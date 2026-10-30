@@ -21,9 +21,6 @@
   });
 
   const api = Object.freeze({
-    session: () => request(`${base}/session`),
-    listTrips: () => request(`${base}/trips`),
-    createTrip: (id, title) => request(`${base}/trips`, json("POST", { id, title })),
     getPackage: (tripId) => request(tripPath(tripId, "package")),
     savePackage: (tripId, value, revision) => request(tripPath(tripId, "package"), json("PUT", { package: value }, revision)),
     getContent: (tripId) => request(tripPath(tripId, "content")),
@@ -31,15 +28,6 @@
     getBackup: (tripId) => request(tripPath(tripId, "backup")),
     listRevisions: (tripId) => request(tripPath(tripId, "revisions")),
     restoreRevision: (tripId, sourceRevision, expectedRevision) => request(tripPath(tripId, `revisions/${encodeURIComponent(sourceRevision)}/restore`), json("POST", { expectedRevision }, expectedRevision)),
-    listMembers: (tripId) => request(tripPath(tripId, "members")),
-    setMemberRole: (tripId, userId, role) => request(tripPath(tripId, `members/${encodeURIComponent(userId)}`), json("PATCH", { role })),
-    removeMember: (tripId, userId) => request(tripPath(tripId, `members/${encodeURIComponent(userId)}`), { method: "DELETE" }),
-    listInvitations: (tripId) => request(tripPath(tripId, "invitations")),
-    invite: (tripId, { email = "", role = "viewer", expiresInDays = 7 } = {}) => request(tripPath(tripId, "invitations"), json("POST", { email, role, expiresInDays })),
-    revokeInvitation: (tripId, invitationId) => request(tripPath(tripId, `invitations/${encodeURIComponent(invitationId)}`), { method: "DELETE" }),
-    inspectInvitation: (token) => request(`${base}/invitations/inspect`, json("POST", { token })),
-    acceptInvitation: (token) => request(`${base}/invitations/accept`, json("POST", { token })),
-    declineInvitation: (token) => request(`${base}/invitations/decline`, json("POST", { token })),
     listAttachments: (tripId) => request(tripPath(tripId, "attachments")),
     async uploadAttachment(tripId, attachment, file) {
       const response = await fetch(tripPath(tripId, "attachments"), {

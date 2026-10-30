@@ -1,65 +1,34 @@
-# Phase 5：Cloudflare 私人旅行存储配置说明
+# Phase 5：公开访问的单旅行站点
 
-## 当前代码中的资料结构
+## 当前部署模式
 
-- 初始行程模板仍是根目录的 `trip-data.json`。它是静态包模板；Pages 构建脚本不会把它作为静态文件发布。
-- 可编辑住宿、交通、餐厅和每日行程保存在按 `tripId` 隔离的旅行内容对象；运行时账单、同行者、To Do 和票据状态分别沿用项目现有集合。
-- 本地模式继续使用 `localStorage`；附件继续采用 IndexedDB（数据库 `travel-plan-local-attachments`）。本阶段没有读取、清除或迁移浏览器里的资料。
-- 云端状态表把旅行包、内容和运行集合保存在同一版本化状态中；附件元数据在 D1，文件对象在不公开的 R2 bucket。
+网站公开访问，不使用 Cloudflare Access、登录身份、邮箱验证码、成员邀请或 Owner/Editor/Viewer 权限。任何访问网站的人都能读取旅行资料，并且可通过现有页面编辑资料；API 的写请求仍检查同源 Origin 以降低跨站请求风险，但它不是身份认证，也不阻止访客直接访问同源 API。因此请把这里的数据视为公开资料，不要保存不希望公开的个人信息。
 
-## 已写入本地仓库的架构
+Pages Functions、D1 和 R2 架构保留。`TRAVEL_DB` 连接旅行包、旅行内容、AA、To Do、票据和版本历史；`TRAVEL_ATTACHMENTS` 连接附件对象。R2 bucket 保持私有，不创建公开 URL；附件通过 `/api/trip/:tripId/attachments/...` Pages Function 流式读写。由于网站公开，附件 API 本身也公开可用，不再有成员级权限。
 
-采用 Cloudflare Pages Functions + D1 + 私有 R2 + Cloudflare Access。Pages Functions 与静态站同源，可使用 D1/R2 binding；Access 身份令牌在 API 中验证签名、受众和有效期。数据库与对象存储没有公开 URL。API 仍独立查询旅行成员关系，所以仅通过 Access 登录并不会自动授予旅行权限。
+## 旅行包加载及持久化
 
-`worker/travel-api.mjs` 实现 API，`functions/api/[[path]].js` 提供 Pages Functions 入口。`functions/trip-data.json.js` 将原静态数据路径改为受保护的成员读取入口；`scripts/build-pages.mjs` 使用允许列表生成静态站，并排除 `trip-data.json`、源文件与测试目录。
+- Pages Function 通过 Wrangler 的 Text module rule 将根目录 `trip-data.json` 打包为函数模块；原始文件不会被复制到 `dist` 公开静态目录。
+- `/trip-data.json` Pages Function 优先读取 D1 中唯一已保存的旅行包，不要求 `DEFAULT_TRIP_ID`。如果 D1 还没有旅行包，则返回构建时读取的项目模板，不会自动写入 D1。
+- 当前仓库模板的 `tripId` 是 `unconfigured`，标题为“旅行计划”，行程和旅行模块为空且模块关闭。它不是已填写的真实旅行资料。无云端旅行包时，页面会使用该模板及浏览器本地存储；每台浏览器的数据不会自动同步。
+- API 只接受 D1 当前唯一旅行包中的 `tripId`，猜测其他旅行 ID 返回 404。如果 D1 存在多个旅行包，页面会报明确错误，不会自行挑选或覆盖。
+- 以前的云端导入、成员和邀请 API 已禁用；成员管理、邀请、登录页面不会纳入 Pages 构建输出。迁移工具页面也不会发布。本次没有读取、上传、修改或删除浏览器本地资料/附件。
 
-### 权限
+## D1、R2 与环境配置
 
-- Owner：读取和编辑全部旅行状态、创建/撤销邀请、变更/移除成员、导出备份、恢复状态历史及恢复附件。
-- Editor：读取旅行状态，修改旅行包/内容/账单等运行集合，上传、替换和软删除附件。
-- Viewer：读取允许共享的旅行状态及附件；API 拒绝所有写入。界面隐藏常见编辑入口，但安全边界是后端判权。
-- 每个旅行 API 先验证 Access JWT，再用当前身份和路径中的 `tripId` 查询有效成员关系。成员移除后后续请求即被拒绝。附件对象通过随机私有对象键读取，不提供公开 bucket URL。
+仓库 `wrangler.toml` 已保留现有绑定：
 
-邀请链接为随机 256 位 token，仅存 SHA-256 摘要，有效期 1–30 天，可绑定邮箱、接受、拒绝、过期和撤销；接受后 token 不可再次使用。邀请链接只在创建时显示一次，由 Owner 自行通过私人渠道发送；当前未接入邮件服务。
+- D1：`TRAVEL_DB` → `travel-plan-private-db`（database ID `0f21ffd7-f9a7-4de8-b93a-ec95a497c61b`）
+- R2：`TRAVEL_ATTACHMENTS` → `travel-plan-private-attachments`
 
-并发编辑采用旅行状态 revision + `If-Match` 比较并交换；冲突返回 HTTP 409，提示刷新后处理，不静默覆盖。D1 保存每次历史版本；Owner 可以通过 API 列出版本并将历史状态恢复为一个新版本。附件使用软删除，Owner 可恢复。
+运行时不再读取 `ACCESS_TEAM_DOMAIN`、`ACCESS_AUD` 或 `DEFAULT_TRIP_ID`。除 Pages Functions 绑定的 `TRAVEL_DB` 和 `TRAVEL_ATTACHMENTS` 外，不需要新增环境变量或 secret。
 
-## API 入口
+如果 Cloudflare 账号之前为该 hostname 配置过 Access 应用，仍需由账号所有者在 Dashboard 中移除/关闭该 Access 策略；本地代码无法取消账号级的 Access 拦截。本次没有操作 Cloudflare 账号。
 
-- `GET /api/session[?tripId=…]`、`GET/POST /api/trips`
-- `/api/trip/:tripId`：运行集合快照与更新
-- `/package`、`/content`：旅行包及可编辑旅行内容
-- `/backup`、`/revisions`、`/revisions/:revision/restore`、`/migrations`
-- `/members`、`/invitations` 及邀请 inspect/accept/decline
-- `/attachments`：列举、上传、读取、替换、软删除和 Owner 恢复
+## D1 数据现状与限制
 
-所有读取响应禁止缓存。API 错误不会输出旅行资料或凭证。写请求校验同源、负载大小、数据结构、`tripId` 和 revision。
+`0001_private_travel.sql` 只创建 D1 表结构，不导入旅行包或浏览器数据。当前仓库中的 `trip-data.json` 是未配置的空白模板。为避免未确认的持久化远程数据变更，Functions 不会自动用这个模板在 D1 创建旅行记录。若 D1 目前没有已保存的旅行包，网页能打开，但会进入空白模板的本地存储模式，尚未启用多设备 D1 同步；现有浏览器本地资料仍只在原浏览器中。旧 schema 中的成员/邀请表保留但 API 不再读取或写入。
 
-## 安全迁移和备份流程
+显式初始化命令 `npm run initialize:public-trip` 只读取并验证仓库里的空白 `trip-data.json`，不读取浏览器 localStorage/IndexedDB。它先确认 `wrangler.toml` 中的 D1 名称和 ID 与已配置数据库一致，然后用 `INSERT OR IGNORE` 写入模板包、空运行集合和初始历史版本；任何已存在的旅行、状态或历史行都不会被覆盖。末尾查询会显示旅行 ID、持久化模式和 `day_count=0`。脚本不会应用 schema migration，也不会创建成员、邀请、附件或 R2 对象。这个命令会写入远程 D1，必须由用户显式运行；本地开发/测试不会自动调用它。
 
-1. 在本机打开 `/cloud-export.html`，下载 JSON 备份。它包括行程包、内容、To Do、票据状态、AA 账单/同行者和该 tripId 的 IndexedDB 附件；导出不会上传或删除本机资料。
-2. 配好并验证 Access、D1、R2 后，以 Owner 身份打开 `/cloud-import.html`。页面显示将导入的旅行与附件数量，并要求再次确认；只允许导入到空白云端旅行。导入失败时保留原备份和本机资料，可重试附件。
-3. 云端可在 `/cloud-export.html` 下载 Owner 备份。恢复状态使用历史 revision API；恢复附件使用附件恢复 API。
-
-此流程目前仅实现为本地代码；尚未使用真实 Cloudflare 账号或资源运行。除用户显式完成配置并确认外，不要执行远端迁移。先将 JSON 备份保存在本机安全位置。
-
-## 需要账户所有者手动配置
-
-Cloudflare 资源尚未创建。开始前需要在用户账号中：
-
-1. 创建 Pages 项目（部署动作本阶段未执行），创建 D1 数据库和私有 R2 bucket。
-2. 仓库中的 `wrangler.toml` 已固定 Pages 项目名 `travel-plan-private` 和 `./dist` 输出目录。创建 D1/R2 后，再将真实 binding 名称和 ID 加入此文件；不要复制含占位值的 `wrangler.toml.example`，也不要将密钥放入源码。
-3. 在 Pages 项目绑定 `TRAVEL_DB` 与 `TRAVEL_ATTACHMENTS`，将 `migrations/0001_private_travel.sql` 应用到数据库。
-4. 配置 Cloudflare Access 应用，保护整个站点路径 `/*`，并确保只有预期身份能登录。获取 team domain 与该 Access application 的 AUD。
-5. 在 Pages Functions 环境设置 `ACCESS_TEAM_DOMAIN`、`ACCESS_AUD`、`DEFAULT_TRIP_ID`。这些不是数据库管理密钥；Access AUD 仅用于验证令牌。不要将 D1/R2 管理密钥暴露到浏览器。
-6. 核对 Access 静态资源保护、函数请求身份头和 Pages Functions 的 D1/R2 bindings 后，再用非真实旅行数据执行授权/越权验收。
-
-`DEFAULT_TRIP_ID` 是当前首页模板适配的单旅行入口。成员可通过 `/api/trips` 查看其成员旅行；若需要一个账号使用多个旅行并在首页切换，需再实现选择器及对应加载流程。
-
-## 本地检查与尚未验证的部分
-
-- Cloudflare Git 集成使用 `npm run build:pages` 作为 Build command，输出目录为 `dist`；Pages 在构建成功后自动发布，无单独 Deploy command 字段。手动 CLI 发布可运行 `npm run deploy:pages`，它会构建并将 `dist` 发布到 `travel-plan-private`。
-- `npm run build:pages` 检查静态发布白名单；输出目录 `dist/` 不包含 `trip-data.json`。
-- `npx wrangler pages dev dist` 需要先安装/提供 Wrangler 并设置本地 bindings。当前环境没有 Cloudflare 账号凭证或已配置 bindings，故未声称 Pages Functions、Access、D1、R2 已在 Cloudflare 实际运行。
-- API 自动测试使用模拟身份、D1 仓储和 R2 bucket，覆盖匿名/伪造令牌、角色、跨旅行访问、并发 revision、邀请和附件访问；它们不替代真实 Cloudflare 集成测试。
-- 浏览器本地预览仍是本地模式，不会验证私人云端端点。请不要把静态本地预览地址当成已启用访问保护的云站点。
+Pages Build command 为 `npm run build:pages`，输出目录 `dist`。构建产物不含公开静态 `trip-data.json`；需确认包含 `functions/` 的 Pages Functions 部署方式。部署后还需以公开模式验证 `/trip-data.json`、D1 API 和 R2 流式访问。

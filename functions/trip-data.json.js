@@ -1,11 +1,12 @@
-import { handleApi } from "../worker/travel-api.mjs";
+import tripTemplateSource from "../trip-data.json";
+import { createD1Repository } from "../worker/travel-api.mjs";
+
+const tripTemplate = JSON.parse(tripTemplateSource);
 
 export async function onRequest(context) {
-  const tripId = String(context.env.DEFAULT_TRIP_ID || "").trim();
-  if (!tripId) return Response.json({ error: "private_trip_not_configured" }, { status: 503 });
-  const target = new URL(`/api/trip/${encodeURIComponent(tripId)}/package`, context.request.url);
-  const response = await handleApi(new Request(target, context.request), context.env);
-  if (!response.ok) return response;
-  const payload = await response.json();
-  return Response.json(payload.package, { headers: { "cache-control": "private, no-store", etag: `"${payload.revision}"`, "x-content-type-options": "nosniff" } });
+  if (context.request.method !== "GET" && context.request.method !== "HEAD") return new Response("Method not allowed", { status: 405, headers: { allow: "GET, HEAD" } });
+  let published = null;
+  if (context.env.TRAVEL_DB) published = await createD1Repository(context.env.TRAVEL_DB).getPublicTrip();
+  const data = published?.package || tripTemplate;
+  return Response.json(data, { headers: { "cache-control": "no-store", ...(published ? { etag: `"${published.revision}"` } : {}), "x-content-type-options": "nosniff" } });
 }
