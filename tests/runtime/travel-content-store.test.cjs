@@ -31,18 +31,38 @@ test("initial snapshots copy existing trip content and assign stable ids without
 test("trip title persists across local reload and legacy snapshots use the existing metadata title", () => {
   const storage = memoryStorage();
   const store = storeApi.createStore("title-trip", storage);
-  const initial = store.load({ metadata: { tripId: "title-trip", title: "Template title" }, accommodations: [{ id: "stay-1", name: "Keep me" }] });
+  const initial = store.load({ metadata: { tripId: "title-trip", title: "Template title" }, trip: { startDate: "2026-12-20", endDate: "2026-12-28" }, accommodations: [{ id: "stay-1", name: "Keep me" }] });
   initial.metadata.title = "My updated trip";
+  initial.metadata.startDate = "2027-01-02";
+  initial.metadata.endDate = "2027-01-08";
   store.save(initial);
   const reloaded = store.load();
   assert.equal(reloaded.metadata.title, "My updated trip");
+  assert.equal(reloaded.metadata.startDate, "2027-01-02");
+  assert.equal(reloaded.metadata.endDate, "2027-01-08");
   assert.equal(reloaded.accommodations[0].name, "Keep me");
+  reloaded.days.push({ id: "different-itinerary-date", date: "2030-04-01", schedule: [] });
+  assert.equal(reloaded.metadata.startDate, "2027-01-02", "itinerary dates do not replace manually saved trip dates");
+  assert.throws(() => storeApi.validate({ ...reloaded, metadata: { ...reloaded.metadata, startDate: "2027-01-09", endDate: "2027-01-08" } }, "title-trip"), /结束日期不能早于开始日期/);
+  assert.throws(() => storeApi.validate({ ...reloaded, metadata: { ...reloaded.metadata, startDate: "2027-02-30" } }, "title-trip"), /日期格式无效/);
 
   const old = storeApi.createInitialContent({ metadata: { tripId: "old-title-trip", title: "Old template title" } });
   delete old.metadata;
   const oldStore = storeApi.createStore("old-title-trip", storage);
   storage.setItem(oldStore.storageKey, JSON.stringify(old));
   assert.equal(oldStore.load({ metadata: { tripId: "old-title-trip", title: "Old template title" } }).metadata.title, "Old template title");
+});
+
+test("legacy snapshots without trip dates fall back to existing package dates without losing title", () => {
+  const storage = memoryStorage();
+  const old = storeApi.createInitialContent({ metadata: { tripId: "legacy-date", title: "Archive trip" } });
+  delete old.metadata.startDate;
+  delete old.metadata.endDate;
+  storage.setItem(storeApi.keyFor("legacy-date"), JSON.stringify(old));
+  const loaded = storeApi.createStore("legacy-date", storage).load({ metadata: { tripId: "legacy-date", title: "Archive trip" }, trip: { startDate: "2028-05-01", endDate: "2028-05-05" } });
+  assert.equal(loaded.metadata.title, "Archive trip");
+  assert.equal(loaded.metadata.startDate, "2028-05-01");
+  assert.equal(loaded.metadata.endDate, "2028-05-05");
 });
 
 test("snapshots persist per trip and preserve unknown records from other collections", () => {

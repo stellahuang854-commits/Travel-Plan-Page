@@ -36,7 +36,7 @@ test("D1 content endpoint snapshot, rather than the static trip package, feeds t
   const previousFetch = global.fetch;
   let revision = 4;
   let remoteContent = emptyContent("cloud-trip");
-  remoteContent.metadata = { title: "Initial cloud title" };
+  remoteContent.metadata = { title: "Initial cloud title", startDate: "2030-08-01", endDate: "2030-08-08" };
   remoteContent.restaurants.push({ id: "remote-restaurant", name: "Saved remotely" });
   global.fetch = async (_url, options = {}) => {
     if (options.method === "PUT") {
@@ -52,11 +52,15 @@ test("D1 content endpoint snapshot, rather than the static trip package, feeds t
     const loaded = await firstDevice.load(packageTemplate);
     assert.equal(loaded.restaurants[0].name, "Saved remotely");
     loaded.metadata.title = "Edited title from this device";
+    loaded.metadata.startDate = "2030-09-02";
+    loaded.metadata.endDate = "2030-09-10";
     loaded.accommodations.push({ id: "stay-cloud", name: "Saved in D1" });
     await firstDevice.save(loaded);
     const secondDevice = store.createCloudStore("cloud-trip");
     const afterReload = await secondDevice.load(packageTemplate);
     assert.equal(afterReload.metadata.title, "Edited title from this device");
+    assert.equal(afterReload.metadata.startDate, "2030-09-02");
+    assert.equal(afterReload.metadata.endDate, "2030-09-10");
     const html = view.renderPublicContent(afterReload);
     assert.match(html, /Saved in D1/);
     assert.match(html, /Saved remotely/);
@@ -64,15 +68,17 @@ test("D1 content endpoint snapshot, rather than the static trip package, feeds t
   } finally { global.fetch = previousFetch; }
 });
 
-test("older D1 content without a title falls back to the existing package metadata title", async () => {
+test("older D1 content without title or dates falls back to the existing package metadata and dates", async () => {
   const previousFetch = global.fetch;
   const legacy = emptyContent("cloud-legacy");
   delete legacy.metadata;
   global.fetch = async () => new Response(JSON.stringify({ revision: 1, content: legacy }), { status: 200, headers: { "content-type": "application/json" } });
   try {
     const cloudStore = store.createCloudStore("cloud-legacy");
-    const loaded = await cloudStore.load({ metadata: { tripId: "cloud-legacy", title: "Original metadata name" } });
+    const loaded = await cloudStore.load({ metadata: { tripId: "cloud-legacy", title: "Original metadata name" }, trip: { startDate: "2031-06-01", endDate: "2031-06-04" } });
     assert.equal(loaded.metadata.title, "Original metadata name");
+    assert.equal(loaded.metadata.startDate, "2031-06-01");
+    assert.equal(loaded.metadata.endDate, "2031-06-04");
     assert.deepEqual(loaded.connections, []);
   } finally { global.fetch = previousFetch; }
 });
@@ -97,14 +103,14 @@ test("homepage boarding passes show only explicit outbound and return passenger 
   assert.match(html, /回程/);
   assert.match(html, /同行者 A/);
   assert.match(html, /同行者 B/);
-  assert.match(html, /上海虹桥 → 杭州东/);
-  assert.match(html, /南京南 → 杭州东/);
-  assert.match(html, /杭州东 → 南京南/);
+  assert.match(html, /上海虹桥<\/strong><span aria-hidden="true">→<\/span><strong>杭州东/);
+  assert.match(html, /南京南<\/strong><span aria-hidden="true">→<\/span><strong>杭州东/);
+  assert.match(html, /杭州东<\/strong><span aria-hidden="true">→<\/span><strong>南京南/);
   assert.match(html, /G123/);
   assert.match(html, /G456/);
   assert.match(html, /G789/);
   assert.match(html, /同行者 A、同行者 B/);
-  assert.equal((html.match(/mini-boarding-pass--groups/g) || []).length, 2);
+  assert.equal((html.match(/mini-boarding-pass--journey/g) || []).length, 4);
   assert.doesNotMatch(html, /OLD1|M1/);
   assert.match(html, new RegExp(store.passengerJourneyAttachmentKey("outbound-record", "out-a")));
   assert.match(html, new RegExp(store.passengerJourneyAttachmentKey("return-record", "return-b")));

@@ -132,6 +132,31 @@ function formatCompactDate(dateString) {
   return `${Number(month)}月${Number(day)}日`;
 }
 
+function displayTripDate(dateString) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(dateString || "")) ? dateString.replaceAll("-", ".") : "";
+}
+
+function calendarDayNumber(value) {
+  const [year, month, day] = String(value || "").split("-").map(Number);
+  return year && month && day ? Math.floor(Date.UTC(year, month - 1, day) / 86400000) : NaN;
+}
+
+function browserCalendarDate(now = new Date()) {
+  return [now.getFullYear(), String(now.getMonth() + 1).padStart(2, "0"), String(now.getDate()).padStart(2, "0")].join("-");
+}
+
+function currentTripStatus(startDate, endDate, today = browserCalendarDate()) {
+  if (!startDate && !endDate) return "旅行日期尚未设置";
+  if (!startDate || !endDate) return "旅行日期尚未完整设置";
+  const todayNumber = calendarDayNumber(today);
+  const startNumber = calendarDayNumber(startDate);
+  const endNumber = calendarDayNumber(endDate);
+  if (![todayNumber, startNumber, endNumber].every(Number.isFinite)) return "旅行日期尚未设置";
+  if (todayNumber < startNumber) return `距离出发还有 ${startNumber - todayNumber} 天`;
+  if (todayNumber > endNumber) return `旅行结束 · ${todayNumber - endNumber} 天前`;
+  return `旅行中 · Day ${todayNumber - startNumber + 1}`;
+}
+
 function todayForTrip() {
   const timeZone = state.data?.metadata?.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone;
   try {
@@ -176,6 +201,17 @@ function heroDestinationFor(trip) {
 
 function renderHero() {
   const { trip } = state.data;
+  const contentMetadata = window.TravelContentEditor?.getContent?.()?.metadata || state.data.metadata || {};
+  const startDate = String(contentMetadata.startDate ?? trip?.startDate ?? "");
+  const endDate = String(contentMetadata.endDate ?? trip?.endDate ?? "");
+  const dateText = startDate && endDate
+    ? `${displayTripDate(startDate)} — ${displayTripDate(endDate)}`
+    : startDate
+      ? `${displayTripDate(startDate)} — 结束日期待填写`
+      : endDate
+        ? `开始日期待填写 — ${displayTripDate(endDate)}`
+        : "开始日期 / 结束日期待填写";
+  $("#trip-status").textContent = currentTripStatus(startDate, endDate);
   if (trip.status === "uninitialized") {
     const title = String(state.data.metadata?.title || "旅行计划待生成");
     document.title = title;
@@ -184,15 +220,15 @@ function renderHero() {
     $("#wordmark").innerHTML = "TRIP <span>· READY</span>";
     $("#footer-mark").textContent = "TRIP · READY";
     $("#route-day-count").textContent = "0 DAYS";
-    $("#trip-date").textContent = "等待旅行资料";
+    $("#trip-date").textContent = dateText;
     return;
   }
   const hero = heroDestinationFor(trip);
   const { destinations } = hero;
   const shortMark = destinations.map((country) => country.code).join(" / ");
-  const startDate = typeof trip.startDate === "string" ? trip.startDate : "";
-  const endDate = typeof trip.endDate === "string" ? trip.endDate : "";
-  const year = startDate.slice(0, 4);
+  const safeStartDate = typeof startDate === "string" ? startDate : "";
+  const safeEndDate = typeof endDate === "string" ? endDate : "";
+  const year = safeStartDate.slice(0, 4);
   const title = String(state.data.metadata?.title || hero.title);
   document.title = title;
   $("#trip-title").textContent = title;
@@ -200,9 +236,9 @@ function renderHero() {
   $("#wordmark").innerHTML = `${escapeHtml(shortMark)}${year ? ` <span>· ${escapeHtml(year)}</span>` : ""}`;
   $("#footer-mark").textContent = [shortMark, year].filter(Boolean).join(" · ");
   $("#route-day-count").textContent = `${trip.dayCount} DAYS`;
-  $("#trip-date").textContent = startDate && endDate
-    ? `${formatCompactDate(startDate)} — ${formatCompactDate(endDate)} · ${trip.dayCount}天`
-    : "日期待补充";
+  $("#trip-date").textContent = safeStartDate && safeEndDate
+    ? `${displayTripDate(safeStartDate)} — ${displayTripDate(safeEndDate)}`
+    : "旅行日期尚未设置";
 }
 
 function journeyFlights(journeyId) {
@@ -354,7 +390,7 @@ function renderFlights() {
   const carousel = $("#flight-carousel");
   const boardings = window.TravelContentView?.renderBoardingPasses(currentContent, window.TravelLedger?.getSnapshot()?.travelers || []) || "";
   carousel.innerHTML = boardings;
-  carousel.classList.toggle("flight-carousel--single", (boardings.match(/mini-boarding-pass--groups/g) || []).length === 1);
+  carousel.classList.toggle("flight-carousel--single", carousel.children.length === 1);
 }
 
 function transportDirection(record) {
@@ -834,6 +870,7 @@ function dayCard(day) {
           ${item.note ? `<p class="detail-note">${escapeHtml(item.note)}</p>` : ""}
           ${(item.documentUrls || []).map((entry) => { const url = safeExternalUrl(typeof entry === "string" ? entry : entry.url); return url ? `<a class="schedule-map-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">查看相关文件 ↗</a>` : ""; }).join("")}
           <button type="button" class="schedule-map-link" data-schedule-attachments="${escapeHtml(item.id)}" data-day-id="${escapeHtml(day.id)}" aria-haspopup="dialog" aria-controls="transport-detail-dialog">附件 / 预约凭证</button>
+          <button type="button" class="schedule-map-link" data-edit-day-item="${escapeHtml(day.id)}" data-item-id="${escapeHtml(item.id)}">编辑安排</button>
           ${scheduleTickets}
           ${mapLinks ? `<div class="schedule-map-links">${mapLinks}</div>` : ""}
         </div>
@@ -967,13 +1004,55 @@ function currentTripDay() {
   return state.data.days.find((day) => day.date === today)?.day || null;
 }
 
+function orderedTripDays() {
+  return [...(state.data?.days || [])].sort((first, second) => String(first.date || "").localeCompare(String(second.date || "")) || (Number(first.day) || 0) - (Number(second.day) || 0));
+}
+
+function renderTripOverview() {
+  const host = $("#trip-overview-content");
+  if (!host || !state.data) return;
+  const days = orderedTripDays();
+  const content = window.TravelContentEditor?.getContent?.() || {};
+  const locations = [];
+  for (const day of days) {
+    for (const location of [...(day.locations || []), ...(day.schedule || []).map((item) => item.location || item.placeName).filter(Boolean)]) {
+      const label = String(location).trim();
+      if (label && locations.at(-1) !== label) locations.push(label);
+    }
+  }
+  const { startDate = "", endDate = "" } = content.metadata || {};
+  const tripDays = startDate && endDate && endDate >= startDate ? calendarDayNumber(endDate) - calendarDayNumber(startDate) + 1 : null;
+  const transportNames = { flight: "航班", "high-speed-rail": "高铁", train: "火车", metro: "地铁", "bus-coach": "巴士", "ferry-boat": "轮渡", "taxi-ride-hailing": "出租车", "rental-car-driving": "自驾", walking: "步行", bicycle: "自行车", other: "其他交通" };
+  const transportTypes = [...new Set([
+    ...(content.transportRecords || []).flatMap((record) => window.TravelContentStore.normalizePassengerJourneys(record).map((journey) => journey.type || record.type)),
+    ...(state.data.flights?.length ? ["flight"] : []),
+    ...(state.data.groundTransport?.rentalCar ? ["rental-car-driving"] : [])
+  ].filter(Boolean).map((type) => transportNames[type] || type))];
+  const summary = [
+    tripDays ? `<div><strong>${tripDays} DAYS</strong><span>旅行天数</span></div>` : "",
+    content.accommodations?.length ? `<div><strong>${content.accommodations.length} 处</strong><span>住宿</span></div>` : "",
+    days.length ? `<div><strong>${days.length} 天</strong><span>已规划</span></div>` : "",
+    transportTypes.length ? `<div><strong>${escapeHtml(transportTypes.join(" · "))}</strong><span>主要交通</span></div>` : ""
+  ].filter(Boolean).join("");
+  host.innerHTML = `${summary ? `<div class="trip-overview-stats">${summary}</div>` : ""}${locations.length ? `<ol class="trip-overview-route">${locations.map((location) => `<li>${escapeHtml(location)}</li>`).join("")}</ol>` : `<p class="trip-overview-empty">还没有已规划的地点。添加每日行程后，这里会汇总真实路线。</p>`}`;
+}
+
+function renderDayOverviewCard(day, index) {
+  const locations = [...new Set([...(day.locations || []), ...(day.schedule || []).map((item) => item.location || item.placeName).filter(Boolean)])];
+  const highlights = (day.schedule || []).map((item) => item.text || item.title).filter(Boolean).slice(0, 3);
+  const placeSummary = locations.length ? locations.join(" → ") : "地点待补充";
+  const date = day.date ? displayTripDate(day.date) : "日期待补充";
+  const routeKey = day.date || `id=${day.id}`;
+  return `<a class="day-overview-card" href="#day/${encodeURIComponent(routeKey)}" data-day-date="${escapeHtml(day.date || "")}"><span class="day-overview-card__meta">DAY ${String(day.day || index + 1).padStart(2, "0")}</span><strong>${escapeHtml(date)}</strong><span class="day-overview-card__places">${escapeHtml(placeSummary)}</span><span class="day-overview-card__summary">${escapeHtml(highlights.join(" · ") || "尚未添加当天安排")}</span><span class="day-overview-card__arrow" aria-hidden="true">→</span></a>`;
+}
+
 function renderTimeline() {
-  const today = currentTripDay();
-  state.expandedDay = today;
-  const orderedDays = [...state.data.days].sort((first, second) => String(first.date || "").localeCompare(String(second.date || "")) || (Number(first.day) || 0) - (Number(second.day) || 0));
+  const orderedDays = orderedTripDays();
   $("#day-count").textContent = `${orderedDays.length} DAYS`;
-  $("#timeline").innerHTML = orderedDays.map(dayCard).join("");
-  $("#timeline").onclick = (event) => {
+  $("#timeline").innerHTML = orderedDays.map(renderDayOverviewCard).join("") || `<p class="trip-overview-empty">还没有每日行程。可以从“管理资料”添加一天。</p>`;
+  $("#day-timeline").onclick = (event) => {
+    const editItem = event.target.closest("[data-edit-day-item]");
+    if (editItem) { window.TravelContentEditor?.openDayItem?.(editItem.dataset.editDayItem, editItem.dataset.itemId); return; }
     const weatherButton = event.target.closest("[data-weather-day]");
     if (weatherButton) { void queryDayWeather(weatherButton); return; }
     const connectionButton = event.target.closest("[data-connection-edit]");
@@ -995,17 +1074,17 @@ function renderTimeline() {
     const card = toggle.closest(".day-card");
     const dayNumber = Number(card.dataset.day);
     const wasExpanded = toggle.getAttribute("aria-expanded") === "true";
-    $$(".day-toggle", $("#timeline")).forEach((button) => button.setAttribute("aria-expanded", "false"));
-    $$(".day-detail", $("#timeline")).forEach((detail) => { detail.hidden = true; });
+    $$(".day-toggle", $("#day-timeline")).forEach((button) => button.setAttribute("aria-expanded", "false"));
+    $$(".day-detail", $("#day-timeline")).forEach((detail) => { detail.hidden = true; });
     if (!wasExpanded) {
       toggle.setAttribute("aria-expanded", "true");
-      $(`#day-detail-${dayNumber}`).hidden = false;
+      $("#day-detail-" + dayNumber, $("#day-timeline")).hidden = false;
       state.expandedDay = dayNumber;
     } else {
       state.expandedDay = null;
     }
   };
-  $("#timeline").onchange = (event) => {
+  $("#day-timeline").onchange = (event) => {
     const checkbox = event.target.closest(".schedule-ticket input[type='checkbox']");
     if (!checkbox) return;
     if (checkbox.checked) state.purchasedTickets.add(checkbox.value);
@@ -1013,6 +1092,34 @@ function renderTimeline() {
     saveTicketState(checkbox.value, checkbox.checked);
     updateInlineTicketState(checkbox.value, checkbox.checked);
   };
+}
+
+function renderPageRoute() {
+  const match = location.hash.match(/^#day\/(.+)$/);
+  const routeKey = match ? decodeURIComponent(match[1]) : "";
+  const day = match ? state.data?.days?.find((item) => routeKey.startsWith("id=") ? item.id === routeKey.slice(3) : item.date === routeKey) : null;
+  const home = $("#home-content");
+  const page = $("#day-page");
+  home.hidden = Boolean(match);
+  page.hidden = !match;
+  if (!match) return;
+  if (!day) {
+    $("#day-page-kicker").textContent = "DAY NOT FOUND";
+    $("#day-page-title").textContent = "没有这一天的行程";
+    $("#day-page-location").textContent = "请返回旅行总览，选择已有日期。";
+    $("#day-route-map").innerHTML = "";
+    $("#day-timeline").innerHTML = "";
+    return;
+  }
+  $("#day-page-kicker").textContent = `DAY ${String(day.day || 1).padStart(2, "0")}`;
+  $("#day-page-title").textContent = displayTripDate(day.date);
+  const places = [...new Set([...(day.locations || []), ...(day.schedule || []).map((item) => item.location || item.placeName).filter(Boolean)])];
+  $("#day-page-location").textContent = places.join(" → ") || "当天地点尚未添加";
+  state.expandedDay = Number(day.day);
+  $("#day-timeline").innerHTML = dayCard(day);
+  const map = window.TravelRouteUI?.renderDayMap?.(day.day);
+  $("#day-route-map").innerHTML = map || `<p class="trip-overview-empty">此日还没有可显示的地图路线或已确认坐标。</p>`;
+  window.TravelRouteUI?.activateDayMap?.($("#day-route-map"));
 }
 
 async function queryDayWeather(button) {
@@ -1499,6 +1606,8 @@ async function init() {
           if (moduleEnabled("itinerary")) renderTimeline();
           renderFlights();
           renderHero();
+          renderTripOverview();
+          renderPageRoute();
           renderTravelContentDisplay();
         }
       });
@@ -1519,6 +1628,21 @@ async function init() {
     }
     renderHero();
     if (moduleEnabled("itinerary")) renderTimeline();
+    renderTripOverview();
+    renderPageRoute();
+    window.addEventListener("hashchange", renderPageRoute);
+    $("#day-page-edit")?.addEventListener("click", () => {
+      const match = location.hash.match(/^#day\/(.+)$/);
+      const routeKey = match ? decodeURIComponent(match[1]) : "";
+      const day = match && state.data.days.find((item) => routeKey.startsWith("id=") ? item.id === routeKey.slice(3) : item.date === routeKey);
+      if (day) window.TravelContentEditor?.openDay?.(day.id);
+    });
+    $("#day-page-add")?.addEventListener("click", () => {
+      const match = location.hash.match(/^#day\/(.+)$/);
+      const routeKey = match ? decodeURIComponent(match[1]) : "";
+      const day = match && state.data.days.find((item) => routeKey.startsWith("id=") ? item.id === routeKey.slice(3) : item.date === routeKey);
+      if (day) window.TravelContentEditor?.openDayItem?.(day.id);
+    });
     if (moduleEnabled("driving")) renderRental();
     if (moduleEnabled("todo")) renderTravelPrep();
     if (moduleEnabled("ledger")) {

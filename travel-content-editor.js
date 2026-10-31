@@ -72,7 +72,7 @@
     if (!panel) return;
     editing = null;
     if (activeTab === "tripInfo") {
-      panel.innerHTML = `<form class="travel-editor-form" data-trip-title-form><div class="travel-content-list__heading"><h3>旅行基本信息</h3></div><div class="travel-editor-fields">${field("旅行名称", "title", content.metadata?.title || "", "text", { required: true, maxlength: 120 })}</div><div class="travel-editor-actions"><button type="submit">保存名称</button></div></form>`;
+      panel.innerHTML = `<form class="travel-editor-form" data-trip-title-form><div class="travel-content-list__heading"><h3>旅行基本信息</h3></div><div class="travel-editor-fields">${field("旅行名称", "title", content.metadata?.title || "", "text", { required: true, maxlength: 120 })}${field("旅行开始日期", "startDate", content.metadata?.startDate || "", "date")}${field("旅行结束日期", "endDate", content.metadata?.endDate || "", "date")}</div><div class="travel-editor-actions"><button type="submit">保存旅行信息</button></div></form>`;
       return;
     }
     if (activeTab === "todoCategories") {
@@ -353,15 +353,12 @@
   function applyToPage() {
     context.data.metadata = context.data.metadata || {};
     context.data.metadata.title = content.metadata?.title || "";
+    context.data.trip = context.data.trip || {};
+    context.data.trip.startDate = content.metadata?.startDate || null;
+    context.data.trip.endDate = content.metadata?.endDate || null;
     context.data.accommodations = copy(content.accommodations);
     context.data.restaurants = copy(content.restaurants);
     context.data.days = copy(content.days);
-    if (context.data.trip) {
-      const dates = content.days.map((day) => day.date).filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)).sort();
-      context.data.trip.dayCount = content.days.length;
-      context.data.trip.startDate = dates[0] || null;
-      context.data.trip.endDate = dates.at(-1) || null;
-    }
     window.TRAVEL_CONTENT = copy(content);
     context.onDataChanged?.(context.data);
   }
@@ -463,7 +460,10 @@
   async function saveTripTitle(form) {
     const title = String(new FormData(form).get("title") || "").trim();
     if (!title) { status("请输入旅行名称。", true); form.elements.title?.focus(); return; }
-    const ok = await commit((next) => { next.metadata = { ...(next.metadata || {}), title }; }, "旅行名称已保存。");
+    const startDate = String(new FormData(form).get("startDate") || "");
+    const endDate = String(new FormData(form).get("endDate") || "");
+    if (startDate && endDate && endDate < startDate) { status("旅行结束日期不能早于开始日期。", true); form.elements.endDate?.focus(); return; }
+    const ok = await commit((next) => { next.metadata = { ...(next.metadata || {}), title, startDate, endDate }; }, "旅行信息已保存。");
     if (ok) renderList();
   }
 
@@ -720,6 +720,13 @@
   }
 
   function openTab(tab) { openDialog(tab); }
+  function openDay(dayId) { selectedDayId = String(dayId || ""); activeTab = "days"; document.querySelector("#travel-content-dialog")?.showModal(); renderTabs(); renderList(); }
+  function openDayItem(dayId, itemId = "") {
+    selectedDayId = String(dayId || ""); activeTab = "days";
+    document.querySelector("#travel-content-dialog")?.showModal(); renderTabs(); renderList();
+    const day = content?.days.find((item) => item.id === selectedDayId);
+    if (day) openForm("schedule", itemId ? day.schedule?.find((item) => item.id === itemId) : null);
+  }
   function getContent() { return content ? copy(content) : null; }
 
   function getSourceDetails(sourceType, sourceId) {
@@ -771,5 +778,5 @@
     return commit((next) => { next.connections = next.connections.filter((item) => item.fromItemId !== itemId && item.toItemId !== itemId); }, "关联交通衔接已清理。");
   }
 
-  window.TravelContentEditor = Object.freeze({ init, openTab, openTransportForRole, getContent, getCategories: () => copy(content?.todoCategories || []), transportsForDay, getSourceDetails, saveSourceDetails, saveConnection, deleteConnection, removeConnectionsForItem });
+  window.TravelContentEditor = Object.freeze({ init, openTab, openDay, openDayItem, openTransportForRole, getContent, getCategories: () => copy(content?.todoCategories || []), transportsForDay, getSourceDetails, saveSourceDetails, saveConnection, deleteConnection, removeConnectionsForItem });
 })();

@@ -31,14 +31,18 @@
         const label = role === "outbound" ? "去程" : "回程";
         return `<button type="button" class="mini-boarding-pass mini-boarding-pass--empty" data-add-transport="${role}"><span class="mini-boarding-pass__top"><b>${label}</b><span>PASSENGER JOURNEYS</span><i aria-hidden="true">✳</i></span><span class="mini-boarding-pass__empty">尚未添加 · 添加${label}交通</span></button>`;
       }
-      const rows = entries.map(({ record, journey }) => {
+      return entries.map(({ record, journey }) => {
         const passengers = [...new Set([...(journey.travelerIds || []).map((id) => travelerMap.get(String(id))).filter(Boolean), journey.passenger, journey.passengerName].filter(Boolean))].join("、") || "同行者待选择";
-        const detail = [transportLabels[journey.type] || journey.type || transportLabels[record.type], journey.serviceNumber || journey.flightNumber, [journey.from, journey.to].filter(Boolean).join(" → "), [journey.date, journey.startTime, journey.endTime].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
+        const type = transportLabels[journey.type] || journey.type || transportLabels[record.type] || "交通";
+        const service = journey.serviceNumber || journey.flightNumber || "班次待补充";
+        const from = journey.from || "出发地点待补充";
+        const to = journey.to || "到达地点待补充";
+        const date = [journey.date, journey.arrivalDate && journey.arrivalDate !== journey.date ? `抵达 ${journey.arrivalDate}` : ""].filter(Boolean).join(" · ");
+        const time = [journey.startTime, journey.endTime].filter(Boolean).join(" → ") || "时间待补充";
         const attachmentKey = window.TravelContentStore.passengerJourneyAttachmentKey(record.id, journey.id);
-        return `<li class="mini-boarding-pass__traveler"><span><strong>${esc(passengers)}</strong><small>${esc(detail)}</small></span><button type="button" data-passenger-journey-detail="${esc(record.id)}" data-passenger-journey-id="${esc(journey.id)}" data-attachment-transport-id="${esc(attachmentKey)}" aria-label="查看${esc(passengers)}的班次和凭证">详情 ↗</button></li>`;
+        const label = role === "outbound" ? "去程" : "回程";
+        return `<button type="button" class="mini-boarding-pass mini-boarding-pass--journey" data-passenger-journey-detail="${esc(record.id)}" data-passenger-journey-id="${esc(journey.id)}" data-attachment-transport-id="${esc(attachmentKey)}" aria-label="查看${esc(passengers)}的${label}${esc(type)}班次和凭证"><span class="mini-boarding-pass__top"><b>${label}</b><span>${esc(passengers)}</span><i aria-hidden="true">✳</i></span><span class="mini-boarding-pass__mode">${esc(type)}</span><span class="mini-boarding-pass__route"><strong>${esc(from)}</strong><span aria-hidden="true">→</span><strong>${esc(to)}</strong></span><span class="mini-boarding-pass__meta"><span>${esc(date || "日期待补充")}</span><span>${esc(time)}</span></span><span class="mini-boarding-pass__flight">${esc(service)} · 查看座位 / 备注 / 附件 ↗</span></button>`;
       }).join("");
-      const label = role === "outbound" ? "去程" : "回程";
-      return `<div class="mini-boarding-pass mini-boarding-pass--groups"><span class="mini-boarding-pass__top"><b>${label}</b><span>PASSENGER JOURNEYS</span><i aria-hidden="true">✳</i></span><span class="mini-boarding-pass__group-count">${entries.length} 组同行班次</span><ul class="mini-boarding-pass__traveler-list">${rows}</ul></div>`;
     }).join("");
   }
 

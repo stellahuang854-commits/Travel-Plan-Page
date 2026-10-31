@@ -19,6 +19,26 @@ function dailyMapLayoutFor(source, dayNumber) {
   return { places: route.placeIds || [], labels: {}, transport: [] };
 }
 
+function itineraryMapPlaceIds(day, layout, placeLayers, resolvePlace = canonicalPlaceFor) {
+  const items = Array.isArray(day?.schedule) ? day.schedule : [];
+  const labels = new Set([
+    ...(day?.locations || []),
+    ...items.flatMap((item) => [item.location, item.placeName].filter(Boolean)),
+    ...items.flatMap((item) => [...(item.placeIds || []), ...(item.placeId ? [item.placeId] : [])].map((placeId) => {
+      const place = resolvePlace(placeId);
+      return place?.nameZh || place?.name || "";
+    }).filter(Boolean))
+  ].map((label) => String(label).trim().toLocaleLowerCase()).filter(Boolean));
+  if (!labels.size) return [];
+  return (layout?.places || []).filter((placeId) => {
+    const entry = placeLayers.find((place) => place.id === placeId);
+    if (!entry) return false;
+    const canonical = resolvePlace(placeId);
+    const names = [entry.lines?.at(-1), entry.label, canonical?.nameZh, canonical?.name].filter(Boolean).map((name) => String(name).trim().toLocaleLowerCase());
+    return names.some((name) => labels.has(name));
+  });
+}
+
 function placeOptions(source, placeId) {
   const place = placeLayersFor(source).find((item) => item.id === placeId);
   if (!place) return [[placeId, placeId]];
@@ -242,3 +262,24 @@ function setupRouteExplorer() {
   $("#map-dialog").addEventListener("close", () => closePopover());
   $$(".day-detail:not([hidden])").forEach(activateDayMaps);
 }
+
+window.TravelRouteUI = Object.freeze({
+  itineraryMapPlaceIds,
+  renderDayMap(dayNumber) {
+    const day = state.data?.days?.find((item) => Number(item.day) === Number(dayNumber));
+    if (!day) return "";
+    const source = travelMapSourceForDay(state.data?.routeMap, Number(dayNumber));
+    if (!source) return "";
+    const layout = dailyMapLayoutFor(source, Number(dayNumber));
+    const placeLayers = placeLayersFor(source);
+    const includedPlaces = itineraryMapPlaceIds(day, layout, placeLayers);
+    if (!includedPlaces.length) return "";
+    const dailyLayouts = { ...(source.dailyLayouts || {}), [String(dayNumber)]: { ...layout, places: includedPlaces } };
+    const routes = (source.routes || []).map((item) => Number(item.day) === Number(dayNumber) ? { ...item, placeIds: (item.placeIds || []).filter((placeId) => includedPlaces.includes(placeId)), paths: [], overviewPaths: [] } : item);
+    const daySource = { ...source, dailyLayouts, routes };
+    const route = mapRouteDefinitions(daySource).find((item) => Number(item.day) === Number(dayNumber));
+    if (!route) return "";
+    return travelMapMarkup(daySource, route);
+  },
+  activateDayMap(root) { if (root) activateDayMaps(root); }
+});

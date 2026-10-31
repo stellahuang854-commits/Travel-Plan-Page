@@ -143,7 +143,11 @@
     return {
       version: VERSION,
       tripId: String(data.metadata?.tripId || ""),
-      metadata: { title: String(data.metadata?.title || "") },
+      metadata: {
+        title: String(data.metadata?.title || ""),
+        startDate: String(data.trip?.startDate || ""),
+        endDate: String(data.trip?.endDate || "")
+      },
       accommodations: withStableIds(data.accommodations, "stay"),
       transportRecords: existingTransit,
       restaurants: withStableIds(data.restaurants, "restaurant"),
@@ -175,6 +179,11 @@
     if (!content || typeof content !== "object" || Array.isArray(content)) throw new Error("旅行资料格式无效。");
     if (content.version !== VERSION || content.tripId !== expectedTripId) throw new Error("旅行资料版本或 tripId 不匹配。");
     if (content.metadata !== undefined && (!content.metadata || typeof content.metadata !== "object" || Array.isArray(content.metadata) || (content.metadata.title !== undefined && typeof content.metadata.title !== "string"))) throw new Error("旅行基本信息格式无效。");
+    const startDate = String(content.metadata?.startDate || "");
+    const endDate = String(content.metadata?.endDate || "");
+    const validDate = (value) => !value || /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
+    if (!validDate(startDate) || !validDate(endDate)) throw new Error("旅行日期格式无效。");
+    if (startDate && endDate && endDate < startDate) throw new Error("旅行结束日期不能早于开始日期。");
     for (const collection of COLLECTIONS) {
       if (!Array.isArray(content[collection])) throw new Error(`旅行资料 ${collection} 必须是列表。`);
       const ids = new Set();
@@ -251,6 +260,8 @@
       catch { throw new Error("本地旅行资料无法解析；为保护数据，未覆盖原内容。"); }
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && parsed.version === VERSION && parsed.connections === undefined) parsed.connections = [];
       if (parsed && typeof parsed === "object" && (!parsed.metadata || typeof parsed.metadata !== "object" || typeof parsed.metadata.title !== "string")) parsed.metadata = { ...(parsed.metadata && typeof parsed.metadata === "object" ? parsed.metadata : {}), title: String(data?.metadata?.title || "") };
+      if (parsed.metadata.startDate === undefined) parsed.metadata.startDate = String(data?.trip?.startDate || "");
+      if (parsed.metadata.endDate === undefined) parsed.metadata.endDate = String(data?.trip?.endDate || "");
       validate(parsed, String(tripId));
       return clone(parsed);
     }
@@ -288,6 +299,8 @@
       if (content && typeof content === "object" && content.version === VERSION && content.connections === undefined) content.connections = [];
       if (!content.tripId) content.tripId = id;
       if (!content.metadata || typeof content.metadata !== "object" || typeof content.metadata.title !== "string") content.metadata = { ...(content.metadata && typeof content.metadata === "object" ? content.metadata : {}), title: String(data?.metadata?.title || "") };
+      if (content.metadata.startDate === undefined) content.metadata.startDate = String(data?.trip?.startDate || "");
+      if (content.metadata.endDate === undefined) content.metadata.endDate = String(data?.trip?.endDate || "");
       validate(content, id);
       return clone(content);
     }
