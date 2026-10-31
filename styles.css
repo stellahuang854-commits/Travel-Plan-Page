@@ -730,6 +730,14 @@ html:lang(zh-CN) .ledger-bill-title-row h3 { font-weight: 500; }
 #day-page-location { margin:9px 0 16px; color:var(--muted); line-height:1.5; overflow-wrap:anywhere; }
 .day-page-actions { margin-bottom:24px; }
 .day-page-actions button { min-height:44px; padding:0 15px; border:1px solid var(--line); border-radius:999px; color:var(--ink); background:var(--surface); font:inherit; cursor:pointer; }
+.day-page-weather { min-width:0; margin:0 0 24px; padding:16px; border:1px solid var(--line); border-radius:var(--radius-md); background:var(--surface); box-shadow:var(--shadow); overflow-wrap:anywhere; }
+.day-page-weather h3 { margin:0 0 8px; color:var(--ink); font-size:17px; }
+.day-page-weather p { margin:0 0 12px; color:var(--muted); font-size:13px; line-height:1.55; }
+.day-page-weather__place { color:var(--ink) !important; font-weight:650; }
+.day-page-weather__result { display:grid; gap:5px; min-width:0; margin-top:12px !important; color:var(--ink) !important; }
+.day-page-weather button { min-height:44px; max-width:100%; padding:8px 14px; border:1px solid var(--lake); border-radius:999px; color:white; background:var(--lake); font:inherit; overflow-wrap:anywhere; cursor:pointer; }
+.day-page-weather button:disabled { opacity:.65; cursor:wait; }
+.day-page-weather [hidden] { display:none !important; }
 .day-page-route,.day-page-itinerary { margin-top:24px; }
 .day-page-route h3,.day-page-itinerary h3 { margin:0 0 12px; color:var(--ink); font-size:20px; }
 #day-page[hidden],#home-content[hidden] { display:none !important; }

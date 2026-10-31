@@ -71,6 +71,61 @@ test("Day page has its own readable Day Tag, interactive map controls and per-lo
   assert.match(app, /打开地图|查看 \$\{escapeHtml\(destination\.label\)\} 的地图/);
   assert.match(html, /href="#day-index">← 返回每日行程总览/);
   assert.match(app, /这一天还没有可显示在地图上的地点/);
+  assert.match(html, /id="day-page-weather"/);
+  assert.match(app, /\$\("#day-page-weather"\)\.innerHTML = renderDayWeatherPanel\(day\)/);
+  assert.match(app, /dayCard\(day, \{ includeWeather: false \}\)/);
+  assert.match(app, /\$\("#day-page-weather"\)\?\.addEventListener\("click"/);
+  assert.match(app, /orderedTripDays\(\)\.find\(\(item\) => item\.id === button\.dataset\.weatherDay\)/);
+  assert.match(app, /data-weather-date="\$\{escapeHtml\(day\.date \|\| ""\)\}"/);
+});
+
+test("Day weather location follows itinerary, accommodation, transport, and saved Day data", () => {
+  const helpers = ["scheduleLocation", "dayWeatherLocation"].map(functionSource).join("\n");
+  const resolve = new Function("window", "state", `${helpers}\nreturn dayWeatherLocation;`)({
+    TravelContentEditor: { getContent: () => ({ accommodations: [{ name: "Hotel", city: "Hotel City", checkInDate: "2026-12-20", checkOutDate: "2026-12-22" }], transportRecords: [] }) },
+    TravelContentStore: { normalizePassengerJourneys: () => [] }
+  }, { data: { places: [] } });
+  const itinerary = resolve({ id: "day-1", date: "2026-12-21", schedule: [{ location: "Firenze", city: "Tuscany", locationLatitude: 43.77, locationLongitude: 11.25, coordinateSystem: "wgs84" }] });
+  assert.equal(itinerary.label, "Tuscany");
+  assert.deepEqual(itinerary.coordinates, { lat: 43.77, lng: 11.25, system: "wgs84" });
+  assert.equal(resolve({ id: "day-2", date: "2026-12-21", schedule: [] }).label, "Hotel City");
+  const flightResolve = new Function("window", "state", `${helpers}\nreturn dayWeatherLocation;`)({ TravelContentEditor: { getContent: () => ({ accommodations: [], transportRecords: [] }) }, TravelContentStore: { normalizePassengerJourneys: () => [] } }, { data: { places: [], flights: [{ departure: { date: "2026-12-20", city: "Roma" }, arrival: { date: "2026-12-21", city: "Firenze" } }] } });
+  assert.equal(flightResolve({ id: "flight-day", date: "2026-12-21", schedule: [], locations: ["Fallback saved region"] }).label, "Firenze");
+  const transportResolve = new Function("window", "state", `${helpers}\nreturn dayWeatherLocation;`)({
+    TravelContentEditor: { getContent: () => ({ accommodations: [], transportRecords: [{ id: "t1", passengerJourneys: [{ id: "p1", date: "2026-12-20", arrivalDate: "2026-12-21", from: "Roma Termini", to: "Firenze SMN" }] }] }) },
+    TravelContentStore: { normalizePassengerJourneys: (record) => record.passengerJourneys }
+  }, { data: { places: [] } });
+  assert.equal(transportResolve({ id: "day-3", date: "2026-12-21", schedule: [] }).label, "Firenze SMN");
+  assert.deepEqual(transportResolve({ id: "day-4", date: "2026-12-23", schedule: [], locations: [] }), { label: "", coordinates: null });
+});
+
+test("Day weather cache identity separates trip, date, and place", () => {
+  const cacheKey = new Function("state", "dayWeatherLocation", `${functionSource("dayWeatherCacheKey")}\nreturn dayWeatherCacheKey;`);
+  const resolve = (day) => ({ label: day.location, coordinates: day.coordinates || null });
+  const base = { id: "day1", date: "2026-12-20", location: "Firenze", coordinates: { lat: 43.77, lng: 11.25 } };
+  const key = cacheKey({ data: { metadata: { tripId: "trip-a" } } }, resolve);
+  assert.notEqual(key(base), key({ ...base, date: "2026-12-21" }));
+  assert.notEqual(key(base), key({ ...base, location: "Milano" }));
+  assert.notEqual(key(base), cacheKey({ data: { metadata: { tripId: "trip-b" } } }, resolve)(base));
+});
+
+test("an empty Day has an actionable no-location weather state without guessed place data", () => {
+  const render = new Function("state", "dayWeatherLocation", "dayWeatherCacheKey", "weatherResultText", "escapeHtml", `${functionSource("renderDayWeatherPanel")}\nreturn renderDayWeatherPanel;`)({ dayWeatherCache: new Map() }, () => ({ label: "", coordinates: null }), () => "key", () => "", (value) => String(value));
+  const markup = render({ id: "day-empty", date: "2026-12-21" });
+  assert.match(markup, /请先设置当天地区/);
+  assert.match(markup, /data-weather-add-location/);
+  assert.doesNotMatch(markup, /navigator\.geolocation|当前城市|当前位置/);
+  assert.match(app, /data-weather-add-location[\s\S]*?\$\("#day-page-add"\)\?\.click\(\)/);
+});
+
+test("weather output shows available measurements and never turns null into zero", () => {
+  const format = new Function(`${functionSource("weatherResultText")}\nreturn weatherResultText;`)();
+  const value = format({ available: true, date: "2026-12-21", place: "Firenze", condition: "Partly cloudy", high: null, low: 12, rainProbability: 20, windSpeed: 11, source: "Open-Meteo", note: "Forecast model" }, "Firenze");
+  assert.match(value, /Partly cloudy/);
+  assert.match(value, /12° \/ 最高温无数据/);
+  assert.match(value, /降雨概率 20%/);
+  assert.match(value, /风速 11 km\/h/);
+  assert.doesNotMatch(value, /0°/);
 });
 
 test("home exposes the Day index after the overview map and before later travel sections", () => {
@@ -98,6 +153,9 @@ test("narrow Day cards and Day pages do not introduce a horizontal scroller", ()
   assert.match(css, /\.day-overview-card__arrow\s*\{[^}]*transform:none/s);
   assert.doesNotMatch(css, /\.day-overview-card__arrow\s*\{[^}]*position:absolute/s);
   assert.doesNotMatch(css, /@media\(min-width:700px\)\s*\{[^}]*\.day-overview-card\s*\{[^}]*grid-template-columns/s);
+  assert.match(css, /\.day-page-weather\s*\{[^}]*min-width:0/);
+  assert.match(css, /\.day-page-weather\s+button\s*\{[^}]*min-height:44px/);
+  assert.match(css, /\.day-page-weather\s*\{[^}]*overflow-wrap:anywhere/);
 });
 
 test("daily map filtering includes only locations named by that day's itinerary", () => {

@@ -5,6 +5,7 @@ const state = {
   expandedDay: null,
   countdownTimer: null,
   purchasedTickets: new Set(),
+  dayWeatherCache: new Map(),
   todos: [],
   todoCategories: []
 };
@@ -698,6 +699,72 @@ function scheduleLocation(item) {
   return { placeId: item.placeId || place?.id || "", label, coordinates };
 }
 
+function dayWeatherLocation(day) {
+  const content = window.TravelContentEditor?.getContent?.() || {};
+  const schedule = Array.isArray(day?.schedule) ? day.schedule : [];
+  const itinerary = schedule.map((item) => {
+    const place = scheduleLocation(item);
+    const label = [item.city, item.region, item.cityOrArea].map((value) => String(value || "").trim()).find(Boolean) || place.label;
+    return { label, coordinates: place.coordinates };
+  }).find((place) => place.label || place.coordinates);
+  if (itinerary) return itinerary;
+
+  const date = String(day?.date || "");
+  const stays = content.accommodations || [];
+  for (const stay of stays) {
+    const checkIn = String(stay.checkInDate || stay.checkIn?.date || "");
+    const checkOut = String(stay.checkOutDate || stay.checkOut?.date || "");
+    if (!(stay.dayIds?.includes(day.id) || date && checkIn && checkIn <= date && (!checkOut || date <= checkOut))) continue;
+    const raw = stay.coordinates || stay.geo || {};
+    const latitude = Number(raw.lat ?? stay.latitude); const longitude = Number(raw.lng ?? stay.longitude);
+    const coordinates = Number.isFinite(latitude) && Math.abs(latitude) <= 90 && Number.isFinite(longitude) && Math.abs(longitude) <= 180
+      ? { lat: latitude, lng: longitude, ...(raw.system ? { system: raw.system } : {}) } : null;
+    const label = [stay.city, stay.region, stay.address, stay.name].map((value) => String(value || "").trim()).find(Boolean) || "";
+    if (label || coordinates) return { label, coordinates };
+  }
+
+  for (const record of content.transportRecords || []) {
+    const journeys = window.TravelContentStore?.normalizePassengerJourneys?.(record) || record.passengerJourneys || [];
+    const matches = journeys.map((journey) => ({ journey, date: String(journey.date || record.date || ""), arrivalDate: String(journey.arrivalDate || record.arrivalDate || journey.date || record.date || "") }))
+      .filter((entry) => entry.date === date || entry.arrivalDate === date);
+    for (const entry of matches) {
+      const placeLabel = entry.arrivalDate === date ? (entry.journey.to || record.to || record.toPlace || record.arrival?.station || record.arrival?.place) : (entry.journey.from || record.from || record.fromPlace || record.departure?.station || record.departure?.place);
+      if (placeLabel) return { label: String(placeLabel).trim(), coordinates: null };
+    }
+  }
+
+  for (const flight of state.data?.flights || []) {
+    const departure = flight.departure || {}; const arrival = flight.arrival || {};
+    if (String(arrival.date || "") === date) {
+      const label = [arrival.city, arrival.airportCode].map((value) => String(value || "").trim()).find(Boolean);
+      if (label) return { label, coordinates: null };
+    }
+    if (String(departure.date || "") === date) {
+      const label = [departure.city, departure.airportCode].map((value) => String(value || "").trim()).find(Boolean);
+      if (label) return { label, coordinates: null };
+    }
+  }
+  if (date) for (const transport of state.data?.groundTransport?.publicTransitAndRail || []) {
+    const departureDate = String(transport.date || transport.departure?.date || "");
+    const arrivalDate = String(transport.arrivalDate || transport.arrival?.date || departureDate);
+    if (arrivalDate === date || departureDate === date) {
+      const label = arrivalDate === date
+        ? (transport.to || transport.toPlace || transport.arrival?.station || transport.arrival?.place)
+        : (transport.from || transport.fromPlace || transport.departure?.station || transport.departure?.place);
+      if (label) return { label: String(label).trim(), coordinates: null };
+    }
+  }
+
+  const saved = (day?.locations || []).map((value) => String(value || "").trim()).find(Boolean)
+    || [day?.city, day?.region, day?.cityOrArea].map((value) => String(value || "").trim()).find(Boolean)
+    || "";
+  return { label: saved, coordinates: null };
+}
+
+function dayWeatherCacheKey(day, place = dayWeatherLocation(day)) {
+  return JSON.stringify([state.data?.metadata?.tripId || "", day?.date || "", place.label || "", place.coordinates?.lat ?? null, place.coordinates?.lng ?? null, place.coordinates?.system || ""]);
+}
+
 function connectionForPair(day, first, second) {
   const connection = (window.TravelContentEditor?.getContent()?.connections || []).find((item) => item.dayId === day.id && item.fromItemId === first.id && item.toItemId === second.id);
   if (!connection) return null;
@@ -850,7 +917,7 @@ function setupConnectionDialog() {
   });
 }
 
-function dayCard(day) {
+function dayCard(day, { includeWeather = true } = {}) {
   const today = todayForTrip();
   const isToday = day.date === today;
   const expanded = state.expandedDay === day.day;
@@ -902,10 +969,8 @@ function dayCard(day) {
   const ticketSummary = dayTickets.length
     ? `<span class="day-ticket-summary ${pendingTicketCount ? "has-pending" : "is-complete"}">${pendingTicketCount ? `${pendingTicketCount} 项待购票` : "门票已准备"}</span>`
     : "";
-  const weatherPlace = (day.schedule || []).map((item) => item.location || item.placeName || state.data.places.find((place) => place.id === item.placeId)?.nameZh || state.data.places.find((place) => place.id === item.placeId)?.name).find(Boolean) || (day.locations || []).find(Boolean) || "地点待补充";
-  const weatherTarget = (day.schedule || []).map((item) => ({ item, place: scheduleLocation(item) })).find(({ place }) => place.label || place.coordinates);
-  const weatherAvailable = Boolean(day.date && (weatherTarget?.place.label || weatherTarget?.place.coordinates || weatherPlace !== "地点待补充"));
-  const weatherPlaceLabel = weatherPlace === "地点待补充" && weatherTarget?.place.coordinates ? `${weatherTarget.place.coordinates.lat}, ${weatherTarget.place.coordinates.lng}` : weatherPlace;
+  const weatherLocation = dayWeatherLocation(day);
+  const weatherPlaceLabel = weatherLocation.label || (weatherLocation.coordinates ? `${weatherLocation.coordinates.lat}, ${weatherLocation.coordinates.lng}` : "地点待补充");
   return `
     <article class="day-card${isToday ? " is-today" : ""}" data-day="${day.day}">
       <span class="day-dot" aria-hidden="true"></span>
@@ -919,7 +984,7 @@ function dayCard(day) {
         <span class="day-chevron" aria-hidden="true">+</span>
       </button>
       <div class="day-detail" id="day-detail-${day.day}" ${expanded ? "" : "hidden"}>
-        <section class="day-weather" aria-label="每日天气" data-weather-panel="${escapeHtml(day.id)}"><div><strong>${escapeHtml(weatherPlaceLabel)}</strong><small>${escapeHtml(day.date || "日期待补充")}</small></div><button type="button" data-weather-day="${escapeHtml(day.id)}" ${weatherAvailable ? "" : "disabled"}>查询 Open-Meteo 天气</button><p>仅点击查询时发送此日地点和日期给 Open-Meteo；预报范围为未来 16 天。可不联网查看天气。</p><div class="day-weather-result" role="status" aria-live="polite"></div></section>
+        ${includeWeather ? `<section class="day-weather" aria-label="每日天气" data-weather-panel="${escapeHtml(day.id)}"><div><strong>${escapeHtml(weatherPlaceLabel)}</strong><small>${escapeHtml(day.date || "日期待补充")}</small></div><button type="button" data-weather-day="${escapeHtml(day.id)}" data-weather-date="${escapeHtml(day.date || "")}">查询 Open-Meteo 天气</button><p>仅在点击查询时发送此日地点和日期给 Open-Meteo。通常仅可查询今天至未来 16 天；较远日期会明确提示。可不联网手动规划。</p><div class="day-weather-result" role="status" aria-live="polite"></div></section>` : ""}
         ${!items.length && !transportItems.length ? `<p class="trip-overview-empty day-itinerary-empty">尚未安排行程。可以从当天页面添加第一条安排。</p>` : ""}
         <ol class="schedule">${schedule}${transportSchedule}${staleMarkup}</ol>
         ${costs ? `<div class="costs">${costs}</div>` : ""}
@@ -927,6 +992,27 @@ function dayCard(day) {
       </div>
     </article>
   `;
+}
+
+function weatherResultText(result, requestedLocation) {
+  if (!result.available) return `${result.date || "日期待补充"} · ${result.message} 来源：${result.source || "Open-Meteo"}`;
+  const high = typeof result.high === "number" && Number.isFinite(result.high) ? `${Math.round(result.high)}°` : "最高温无数据";
+  const low = typeof result.low === "number" && Number.isFinite(result.low) ? `${Math.round(result.low)}°` : "最低温无数据";
+  const details = [result.date, result.place || requestedLocation, result.condition, `${low} / ${high}`];
+  if (typeof result.rainProbability === "number" && Number.isFinite(result.rainProbability)) details.push(`降雨概率 ${Math.round(result.rainProbability)}%`);
+  if (typeof result.windSpeed === "number" && Number.isFinite(result.windSpeed)) details.push(`风速 ${Math.round(result.windSpeed)} km/h`);
+  details.push(`来源 ${result.source}`, result.note);
+  return details.filter(Boolean).join(" · ");
+}
+
+function renderDayWeatherPanel(day) {
+  const place = dayWeatherLocation(day);
+  const placeLabel = place.label || (place.coordinates ? `${place.coordinates.lat}, ${place.coordinates.lng}` : "");
+  if (!placeLabel) return `<section class="day-page-weather" aria-labelledby="day-page-weather-title"><h3 id="day-page-weather-title">当天天气</h3><strong>请先设置当天地区</strong><p>天气查询会使用此 Day 的日期和你添加的当天地点，不会读取设备位置。</p><button type="button" data-weather-add-location>＋ 添加当天地点</button></section>`;
+  const cacheKey = dayWeatherCacheKey(day, place);
+  const cached = state.dayWeatherCache.get(cacheKey);
+  const status = cached ? weatherResultText(cached, placeLabel) : "仅在你点击后向 Open-Meteo 查询此 Day 的预报。";
+  return `<section class="day-page-weather" aria-labelledby="day-page-weather-title" data-weather-panel="${escapeHtml(day.id)}"><h3 id="day-page-weather-title">当天天气</h3><p class="day-page-weather__place">${escapeHtml(placeLabel)} · ${escapeHtml(day.date || "日期待补充")}</p><p>查询仅发送该地点和日期给 Open-Meteo；不使用设备位置，也不会自动查询其他 Day。</p><button type="button" data-weather-day="${escapeHtml(day.id)}" data-weather-date="${escapeHtml(day.date || "")}">${cached ? "再次查看天气" : "查看天气 · Open-Meteo"}</button><p class="day-page-weather__result" data-weather-output role="status" aria-live="polite">${escapeHtml(status)}</p></section>`;
 }
 
 function navigationDestinations(item) {
@@ -1155,6 +1241,7 @@ function renderPageRoute() {
     $("#day-page-kicker").textContent = "DAY NOT FOUND";
     $("#day-page-title").textContent = "没有这一天的行程";
     $("#day-page-location").textContent = "请返回旅行总览，选择已有日期。";
+    $("#day-page-weather").innerHTML = "";
     $("#day-route-map").innerHTML = "";
     $("#day-timeline").innerHTML = "";
     return;
@@ -1165,8 +1252,9 @@ function renderPageRoute() {
   const dateLabel = date ? `${String(date.getMonth() + 1).padStart(2, "0")}.${String(date.getDate()).padStart(2, "0")} ${new Intl.DateTimeFormat("en", { weekday: "short" }).format(date).toUpperCase()}` : "日期待补充";
   $("#day-page-title").textContent = dateLabel;
   $("#day-page-location").textContent = dayRegionLabel(day);
+  $("#day-page-weather").innerHTML = renderDayWeatherPanel(day);
   state.expandedDay = Number(day.day);
-  $("#day-timeline").innerHTML = dayCard(day);
+  $("#day-timeline").innerHTML = dayCard(day, { includeWeather: false });
   const map = window.TravelRouteUI?.renderItineraryDayMap?.(day);
   const mapLabels = [...new Set([...(day.locations || []), ...(day.schedule || []).map((item) => item.location || item.placeName || item.text).filter(Boolean)])];
   const mapLinks = mapLabels.map((label) => {
@@ -1180,25 +1268,31 @@ function renderPageRoute() {
 }
 
 async function queryDayWeather(button) {
-  const day = state.data.days.find((item) => item.id === button.dataset.weatherDay);
+  const day = orderedTripDays().find((item) => item.id === button.dataset.weatherDay);
   const panel = button.closest("[data-weather-panel]");
-  const output = $(".day-weather-result", panel);
+  const output = $(".day-weather-result, [data-weather-output]", panel);
   if (!day || !output || !window.TravelPhase3) return;
-  const scheduleTarget = (day.schedule || []).map((item) => ({ item, place: scheduleLocation(item) })).find(({ place }) => place.label || place.coordinates);
-  const coordinates = scheduleTarget?.place.coordinates || null;
-  const location = scheduleTarget?.place.label || (day.locations || []).find(Boolean) || (coordinates ? `${coordinates.lat}, ${coordinates.lng}` : "");
-  button.disabled = true; output.textContent = "正在向 Open-Meteo 请求此日期的天气预报……";
+  const place = dayWeatherLocation(day);
+  const coordinates = place.coordinates || null;
+  const location = place.label || "";
+  if (!day.date || (!location && !coordinates)) {
+    output.textContent = "请先设置当天地区和有效日期，再查询天气。";
+    return;
+  }
+  const cacheKey = dayWeatherCacheKey(day, place);
+  const cached = state.dayWeatherCache.get(cacheKey);
+  if (cached) { output.textContent = weatherResultText(cached, location); return; }
+  button.disabled = true; output.textContent = `正在查询 ${day.date} 的天气……`;
   try {
     const result = await window.TravelPhase3.getWeather({ date: day.date, location, coordinates });
-    if (!result.available) {
-      output.textContent = `${result.date || day.date} · ${result.message} 来源：${result.source || "Open-Meteo"}`;
-      return;
+    if (result.available) {
+      state.dayWeatherCache.set(cacheKey, result);
+      button.textContent = "再次查看天气";
+    } else {
+      button.textContent = "重新查询天气";
     }
-    const high = Number.isFinite(Number(result.high)) ? `${Math.round(result.high)}°` : "无数据";
-    const low = Number.isFinite(Number(result.low)) ? `${Math.round(result.low)}°` : "无数据";
-    const rain = Number.isFinite(Number(result.rainProbability)) ? `降雨概率 ${Math.round(result.rainProbability)}%` : "降雨概率无数据";
-    output.textContent = `${result.date} · ${result.place || location} · ${result.condition} · ${low}–${high} · ${rain} · 来源 ${result.source} · ${result.note}`;
-  } catch (error) { output.textContent = `天气查询失败：${error.message || "服务暂不可用"}。可稍后重试或不联网手动查看。`; }
+    output.textContent = weatherResultText(result, location);
+  } catch (error) { button.textContent = "重新查询天气"; output.textContent = `天气查询失败：${error.message || "服务暂不可用"}。可以重新查询，或不联网手动规划。`; }
   finally { button.disabled = false; }
 }
 
@@ -1692,6 +1786,11 @@ async function init() {
     $("#day-index-list")?.addEventListener("click", (event) => {
       if (!event.target.closest("[data-open-trip-dates]")) return;
       window.TravelContentEditor?.openTab?.("tripInfo");
+    });
+    $("#day-page-weather")?.addEventListener("click", (event) => {
+      if (event.target.closest("[data-weather-add-location]")) { $("#day-page-add")?.click(); return; }
+      const button = event.target.closest("[data-weather-day]");
+      if (button) void queryDayWeather(button);
     });
     $("#day-page-edit")?.addEventListener("click", () => {
       const match = location.hash.match(/^#day\/(.+)$/);

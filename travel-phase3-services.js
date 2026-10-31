@@ -123,16 +123,18 @@
   const WEATHER_CODES = new Map([[0,"晴"],[1,"大致晴朗"],[2,"局部多云"],[3,"阴"],[45,"雾"],[48,"雾凇"],[51,"毛毛雨"],[53,"毛毛雨"],[55,"毛毛雨"],[56,"冻毛毛雨"],[57,"冻毛毛雨"],[61,"小雨"],[63,"中雨"],[65,"大雨"],[66,"冻雨"],[67,"冻雨"],[71,"小雪"],[73,"中雪"],[75,"大雪"],[77,"雪粒"],[80,"阵雨"],[81,"阵雨"],[82,"强阵雨"],[85,"阵雪"],[86,"强阵雪"],[95,"雷暴"],[96,"雷暴伴冰雹"],[99,"强雷暴伴冰雹"]]);
 
   function dayDistance(date, now) {
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const target = new Date(`${date}T12:00:00`);
-    if (!Number.isFinite(target.getTime())) return NaN;
-    return Math.floor((new Date(target.getFullYear(), target.getMonth(), target.getDate()) - today) / 86400000);
+    const [year, month, day] = String(date || "").split("-").map(Number);
+    if (![year, month, day].every(Number.isFinite)) return NaN;
+    return Math.floor((Date.UTC(year, month - 1, day) - Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
   }
 
   async function getWeather({ date, location = "", coordinates, fetchImpl = globalThis.fetch, now = new Date() }) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) throw new Error("这一天没有有效日期，无法查询天气。");
+    const selectedDate = String(date || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(selectedDate) || Number.isNaN(Date.parse(`${selectedDate}T00:00:00Z`)) || new Date(`${selectedDate}T00:00:00Z`).toISOString().slice(0, 10) !== selectedDate) throw new Error("这一天没有有效日期，无法查询天气。");
     const offset = dayDistance(date, now);
-    if (!Number.isFinite(offset) || offset < 0 || offset > 15) return { available: false, date, message: "当前天气预报覆盖未来 16 天；所选日期不在范围内。没有查询或展示替代天气。", source: "Open-Meteo" };
+    if (!Number.isFinite(offset)) return { available: false, date, message: "所选日期无效；没有查询天气。", source: "Open-Meteo" };
+    if (offset < 0) return { available: false, date, message: "所选日期已过去；当前预报服务不提供本页面所需的历史天气。", source: "Open-Meteo" };
+    if (offset > 15) return { available: false, date, message: "天气预报将在日期临近时提供。Open-Meteo 当前通常覆盖今天至未来 16 天；没有查询或展示替代天气。", source: "Open-Meteo" };
     let coords = point(coordinates); let place = clean(location);
     if (coords?.system && coords.system !== "wgs84") coords = null;
     if (!coords) {
@@ -148,7 +150,8 @@
     if (!coords) throw new Error("无法识别地点坐标；没有请求天气数据。");
     const weatherUrl = new URL("https://api.open-meteo.com/v1/forecast");
     weatherUrl.searchParams.set("latitude", String(coords.lat)); weatherUrl.searchParams.set("longitude", String(coords.lng));
-    weatherUrl.searchParams.set("daily", "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max");
+    weatherUrl.searchParams.set("daily", "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max");
+    weatherUrl.searchParams.set("wind_speed_unit", "kmh");
     weatherUrl.searchParams.set("timezone", "auto"); weatherUrl.searchParams.set("start_date", date); weatherUrl.searchParams.set("end_date", date);
     const response = await fetchImpl(weatherUrl.href, { headers: { Accept: "application/json" } });
     if (!response.ok) throw new Error(`Open-Meteo 天气查询失败（HTTP ${response.status}）。`);
@@ -156,11 +159,14 @@
     const daily = payload.daily || {};
     const index = (daily.time || []).indexOf(date);
     if (index < 0) return { available: false, date, place, source: "Open-Meteo", message: "服务未返回所选日期的预报；没有使用其他日期或估算值替代。" };
+    const hasData = [daily.weather_code?.[index], daily.temperature_2m_max?.[index], daily.temperature_2m_min?.[index], daily.precipitation_probability_max?.[index], daily.wind_speed_10m_max?.[index]].some((value) => value !== null && value !== undefined && Number.isFinite(Number(value)));
+    if (!hasData) return { available: false, date, place, source: "Open-Meteo", message: "Open-Meteo 暂未返回这一天的可用天气数据；没有使用其他日期或估算值替代。" };
     return {
       available: true, source: "Open-Meteo", date, place,
       condition: WEATHER_CODES.get(daily.weather_code?.[index]) || "天气状况未知",
       high: daily.temperature_2m_max?.[index], low: daily.temperature_2m_min?.[index],
       rainProbability: daily.precipitation_probability_max?.[index],
+      windSpeed: daily.wind_speed_10m_max?.[index],
       timezone: payload.timezone || "",
       note: "模型预报会随时效变化，不是实际天气保证。"
     };

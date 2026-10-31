@@ -86,7 +86,47 @@ test("weather beyond 16-day range makes no external request", async () => {
   const result = await service.getWeather({ date: "2030-02-01", location: "Private place", fetchImpl: async () => { called = true; }, now: new Date("2030-01-01T10:00:00") });
   assert.equal(called, false);
   assert.equal(result.available, false);
-  assert.match(result.message, /未来 16 天/);
+  assert.match(result.message, /日期临近时提供/);
+});
+
+test("weather prefers real coordinates and requests the selected Day with wind data", async () => {
+  const calls = [];
+  const result = await service.getWeather({ date: "2030-01-03", location: "Firenze", coordinates: { lat: 43.77, lng: 11.25, system: "wgs84" }, now: new Date("2030-01-01T10:00:00"), fetchImpl: async (url) => {
+    calls.push(new URL(url));
+    return { ok: true, json: async () => ({ daily: { time: ["2030-01-03"], weather_code: [2], temperature_2m_max: [20], temperature_2m_min: [12], precipitation_probability_max: [25], wind_speed_10m_max: [11] } }) };
+  } });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].hostname, "api.open-meteo.com");
+  assert.equal(calls[0].searchParams.get("start_date"), "2030-01-03");
+  assert.equal(calls[0].searchParams.get("end_date"), "2030-01-03");
+  assert.equal(calls[0].searchParams.get("latitude"), "43.77");
+  assert.match(calls[0].searchParams.get("daily"), /wind_speed_10m_max/);
+  assert.equal(result.high, 20);
+  assert.equal(result.low, 12);
+  assert.equal(result.windSpeed, 11);
+});
+
+test("historical weather is explicitly unavailable without a forecast request", async () => {
+  let called = false;
+  const result = await service.getWeather({ date: "2029-12-31", location: "Firenze", now: new Date("2030-01-01T10:00:00"), fetchImpl: async () => { called = true; } });
+  assert.equal(called, false);
+  assert.equal(result.available, false);
+  assert.match(result.message, /已过去/);
+});
+
+test("Open-Meteo response with no selected-day values has an explicit no-data state", async () => {
+  let calls = 0;
+  const result = await service.getWeather({ date: "2030-01-02", location: "Firenze", now: new Date("2030-01-01T10:00:00"), fetchImpl: async () => {
+    calls += 1;
+    return { ok: true, json: async () => calls === 1 ? { results: [{ name: "Firenze", latitude: 43.77, longitude: 11.25 }] } : { daily: { time: ["2030-01-02"], temperature_2m_max: [null], temperature_2m_min: [null], weather_code: [null], precipitation_probability_max: [null], wind_speed_10m_max: [null] } } };
+  } });
+  assert.equal(result.available, false);
+  assert.match(result.message, /这一天的可用天气数据/);
+});
+
+test("invalid calendar dates and network failures do not masquerade as valid forecasts", async () => {
+  await assert.rejects(service.getWeather({ date: "2030-02-31", location: "Firenze", now: new Date("2030-01-01") }), /有效日期/);
+  await assert.rejects(service.getWeather({ date: "2030-01-02", location: "Firenze", now: new Date("2030-01-01"), fetchImpl: async () => { throw new Error("offline"); } }), /offline/);
 });
 
 test("weather geocodes a named location instead of sending non-WGS coordinates", async () => {

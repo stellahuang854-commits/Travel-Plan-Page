@@ -57,7 +57,7 @@ test("day page uses a per-day hash route and exposes edit and map hosts for that
   const routeUi = fs.readFileSync(path.join(root, "route-ui.js"), "utf8");
   assert.match(routeUi, /renderDayMap\(dayNumber\)/);
   assert.match(routeUi, /travelMapSourceForDay\(state\.data\?\.routeMap/);
-  assert.match(app, /dayCard\(day\)/);
+  assert.match(app, /dayCard\(day, \{ includeWeather: false \}\)/);
 });
 
 test("home always shows two empty add prompts without inventing transport, and each prompt opens a role-specific editor", () => {
