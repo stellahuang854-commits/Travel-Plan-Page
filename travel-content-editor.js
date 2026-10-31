@@ -288,7 +288,7 @@
       const source = sourceFor(existing);
       const normalized = window.TravelContentStore.normalizePassengerJourneys(existing, { ensureOne: true });
       const journeys = Array.isArray(existing.passengerJourneys) ? normalized : normalized.length ? normalized : [{ id: idFor("passenger-journey"), type: typeValue, ...(source || {}) }];
-      if (!record && journeys.length === 1) journeys[0].id = idFor("passenger-journey");
+      if (!record?.id && !Array.isArray(record?.passengerJourneys) && journeys.length === 1) journeys[0].id = idFor("passenger-journey");
       fields.push(`<section class="passenger-journeys-editor"><h4>同行者班次</h4><p class="travel-editor-hint">多人乘坐同一班次可放在一组；不同班次请分别添加。</p><div data-passenger-journeys>${journeys.map(passengerJourneyFieldset).join("")}</div><button type="button" data-add-passenger-journey>＋ 添加另一组乘客 / 班次</button></section>`);
       if (linked) fields.push(`<p class="travel-editor-hint">关联的原始航班或租车资料不会被复制或覆盖。</p>`);
     }
@@ -308,6 +308,30 @@
 
   function setMulti(select, values) { if (select) [...select.options].forEach((option) => { option.selected = values.includes(option.value); }); }
   function selectedValues(select) { return select ? [...select.selectedOptions].map((option) => option.value) : []; }
+
+  function appendPassengerJourney(form) {
+    const host = form?.querySelector("[data-passenger-journeys]");
+    if (!host) throw new Error("找不到乘客班次列表，请关闭并重新打开交通编辑器。");
+    const index = host.querySelectorAll("[data-passenger-journey-id]").length;
+    const type = String(form.elements.type?.value || "other");
+    const journey = { id: idFor("passenger-journey"), travelerIds: [], type, ticketIds: [] };
+    host.insertAdjacentHTML("beforeend", passengerJourneyFieldset(journey, index));
+    const rows = host.querySelectorAll("[data-passenger-journey-id]");
+    const added = rows[rows.length - 1];
+    added?.querySelector('[data-journey-field="travelerIds"]')?.focus({ preventScroll: true });
+    return journey.id;
+  }
+
+  function handlePassengerJourneyClick(event) {
+    const target = event.target?.closest ? event.target : event.target?.parentElement;
+    const addJourney = target?.closest?.("[data-add-passenger-journey]");
+    if (!addJourney) return;
+    event.preventDefault();
+    const form = addJourney.closest('form[data-editor-form="transportRecords"]');
+    if (!form) { status("找不到交通编辑表单，请重新打开交通资料。", true); return; }
+    try { appendPassengerJourney(form); }
+    catch (error) { status(error.message || "无法添加乘客班次。", true); }
+  }
 
   async function commit(mutator, successMessage) {
     try {
@@ -447,6 +471,10 @@
     const form = button.form;
     const journeyId = button.closest("[data-passenger-journey-id]")?.dataset.passengerJourneyId;
     if (!form || !journeyId) return;
+    if (form.querySelectorAll("[data-passenger-journey-id]").length <= 1) {
+      status("至少保留一组乘客班次；如无需同行者资料，可清空这组字段。", true);
+      return;
+    }
     const draft = draftFromForm(form);
     if (editing?.id && window.TravelAttachmentStore) {
       try {
@@ -551,8 +579,6 @@
   }
 
   function handleClick(event) {
-    const addJourney = event.target.closest("[data-add-passenger-journey]");
-    if (addJourney) { openForm("transportRecords", draftFromForm(addJourney.form)); return; }
     const removeJourney = event.target.closest("[data-remove-passenger-journey]");
     if (removeJourney) {
       void removePassengerJourney(removeJourney);
@@ -681,6 +707,7 @@
       const section = document.querySelector("#travel-content-tools");
       section.hidden = false;
       document.addEventListener("click", handleClick);
+      document.querySelector("#travel-content-panel")?.addEventListener("click", handlePassengerJourneyClick);
       document.addEventListener("submit", handleSubmit);
       document.querySelector("#travel-content-panel")?.addEventListener("change", handleChange);
       return content;

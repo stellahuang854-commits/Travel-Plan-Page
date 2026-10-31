@@ -137,6 +137,55 @@ test("multiple passenger journeys preserve shared riders and different services 
   assert.throws(() => store.save({ ...store.load(), transportRecords: [{ ...reloaded, passengerJourneys: [{ id: "dup" }, { id: "dup" }] }] }), /重复的乘客行程 ID/);
 });
 
+test("multiple passenger journeys survive a D1 content round trip with stable attachment owners", async () => {
+  const previousFetch = global.fetch;
+  let cloudContent = null;
+  let revision = 3;
+  global.fetch = async (_url, init = {}) => {
+    if (init.method === "PUT") {
+      cloudContent = structuredClone(JSON.parse(init.body).content);
+      revision += 1;
+    }
+    return { ok: true, async json() { return { content: structuredClone(cloudContent), revision }; } };
+  };
+  try {
+    const sourceTrip = { metadata: { tripId: "d1-passenger-trip", title: "Existing title" } };
+    const writer = storeApi.createCloudStore("d1-passenger-trip");
+    const content = await writer.load(sourceTrip);
+    content.transportRecords.push({ id: "outbound", type: "train", journeyRole: "outbound", passengerJourneys: [
+      { id: "leg-a", type: "train", travelerIds: ["traveler-a"], serviceNumber: "FR 9512", from: "Firenze", to: "Milano", ticketIds: ["ticket-a"] },
+      { id: "leg-b", type: "train", travelerIds: ["traveler-b"], serviceNumber: "FR 9630", from: "Roma", to: "Milano", ticketIds: ["ticket-b"] }
+    ] });
+    storeApi.validate(content, "d1-passenger-trip");
+    await writer.save(content);
+    const reloaded = await storeApi.createCloudStore("d1-passenger-trip").load(sourceTrip);
+    const journeys = reloaded.transportRecords[0].passengerJourneys;
+    assert.deepEqual(journeys.map((journey) => journey.id), ["leg-a", "leg-b"]);
+    assert.deepEqual(journeys.map((journey) => journey.travelerIds), [["traveler-a"], ["traveler-b"]]);
+    assert.deepEqual(journeys.map((journey) => journey.serviceNumber), ["FR 9512", "FR 9630"]);
+    assert.notEqual(storeApi.passengerJourneyAttachmentKey("outbound", journeys[0].id), storeApi.passengerJourneyAttachmentKey("outbound", journeys[1].id));
+  } finally { global.fetch = previousFetch; }
+});
+
+test("deleting one passenger journey leaves every other group and its attachment owner intact", () => {
+  const store = storeApi.createStore("journey-delete-trip", memoryStorage());
+  const content = store.load({ metadata: { tripId: "journey-delete-trip" } });
+  content.transportRecords.push({ id: "outbound", type: "train", passengerJourneys: [
+    { id: "leg-first", travelerIds: ["a"], serviceNumber: "G123" },
+    { id: "leg-second", travelerIds: ["b"], serviceNumber: "G456" }
+  ] });
+  store.save(content);
+  const draft = store.load();
+  const record = draft.transportRecords[0];
+  const removedKey = storeApi.passengerJourneyAttachmentKey(record.id, "leg-second");
+  record.passengerJourneys = record.passengerJourneys.filter((journey) => journey.id !== "leg-second");
+  store.save(draft);
+  const reloaded = store.load().transportRecords[0];
+  assert.deepEqual(reloaded.passengerJourneys.map((journey) => journey.id), ["leg-first"]);
+  assert.equal(reloaded.passengerJourneys[0].serviceNumber, "G123");
+  assert.notEqual(removedKey, storeApi.passengerJourneyAttachmentKey(reloaded.id, reloaded.passengerJourneys[0].id));
+});
+
 test("explicit journey roles persist, legacy direction remains explicit, and unmarked legacy transport stays unclassified", () => {
   const storage = memoryStorage();
   const store = storeApi.createStore("journey-role-trip", storage);
