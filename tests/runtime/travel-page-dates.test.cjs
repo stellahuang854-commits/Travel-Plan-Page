@@ -93,6 +93,11 @@ test("narrow Day cards and Day pages do not introduce a horizontal scroller", ()
   assert.match(inspirationCss, /\.inspiration-day-option\s*\{[^}]*min-width:0/);
   assert.match(inspirationCss, /\.inspiration-day-option strong,.inspiration-day-option small\s*\{\s*overflow-wrap:anywhere/);
   assert.match(inspirationCss, /@media\(max-width:640px\)\s*\{[\s\S]*?\.inspiration-day-option/);
+  assert.match(css, /\.day-overview-card\s*\{[^}]*display:flex;\s*flex-direction:column/s);
+  assert.match(css, /\.day-overview-card__arrow\s*\{[^}]*position:static/s);
+  assert.match(css, /\.day-overview-card__arrow\s*\{[^}]*transform:none/s);
+  assert.doesNotMatch(css, /\.day-overview-card__arrow\s*\{[^}]*position:absolute/s);
+  assert.doesNotMatch(css, /@media\(min-width:700px\)\s*\{[^}]*\.day-overview-card\s*\{[^}]*grid-template-columns/s);
 });
 
 test("daily map filtering includes only locations named by that day's itinerary", () => {

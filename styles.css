@@ -710,13 +710,13 @@ html:lang(zh-CN) .ledger-bill-title-row h3 { font-weight: 500; }
 .trip-overview-route { list-style:none; margin:18px 0 0; padding:0; display:flex; flex-wrap:wrap; align-items:center; gap:8px 26px; }
 .trip-overview-route li { position:relative; max-width:100%; color:var(--ink); font-family:var(--font-body); font-size:20px; overflow-wrap:anywhere; }
 .trip-overview-route li + li::before { content:"↓"; position:absolute; left:50%; top:-23px; color:var(--muted); font:14px/1 var(--font-body); }
-.day-overview-card { position:relative; min-width:0; min-height:122px; margin-bottom:10px; padding:16px 48px 16px 18px; border:1px solid var(--line); border-radius:var(--radius-md); display:grid; gap:5px; color:var(--ink); background:var(--surface); text-decoration:none; box-shadow:var(--shadow); }
-.day-overview-card__meta { color:var(--muted); font:700 11px/1 ui-monospace,monospace; letter-spacing:.08em; }
-.day-overview-card > strong { font-size:18px; }
-.day-overview-card__places { font-weight:650; overflow-wrap:anywhere; }
-.day-overview-card__summary { color:var(--muted); font-size:13px; line-height:1.45; overflow-wrap:anywhere; }
-.day-overview-card__arrow { position:absolute; right:18px; top:50%; transform:translateY(-50%); font-size:20px; }
-.day-index-list { display:grid; grid-template-columns:minmax(0,1fr); gap:10px; min-width:0; }
+.day-overview-card { box-sizing:border-box; width:100%; min-width:0; min-height:190px; height:auto; margin:0; padding:18px; display:flex; flex-direction:column; align-items:stretch; gap:0; color:var(--ink); background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-md); text-decoration:none; box-shadow:var(--shadow); }
+.day-overview-card__meta { display:block; min-width:0; margin:0 0 8px; color:var(--muted); font:700 11px/1.3 ui-monospace,monospace; letter-spacing:.08em; white-space:normal; overflow-wrap:anywhere; }
+.day-overview-card > strong { display:block; min-width:0; margin:0 0 8px; color:var(--ink); font-size:18px; line-height:1.35; white-space:normal; overflow-wrap:anywhere; }
+.day-overview-card__places { display:block; min-width:0; max-width:100%; margin:0 0 4px; color:var(--ink); font-weight:650; line-height:1.45; white-space:normal; overflow-wrap:anywhere; word-break:normal; }
+.day-overview-card__summary { display:block; min-width:0; max-width:100%; margin:0; color:var(--muted); font-size:13px; line-height:1.5; white-space:normal; overflow-wrap:anywhere; word-break:normal; }
+.day-overview-card__arrow { position:static; display:flex; align-items:flex-end; min-width:0; max-width:100%; min-height:44px; margin-top:auto; padding-top:12px; color:var(--ink); font-size:14px; line-height:1.35; white-space:normal; overflow-wrap:anywhere; transform:none; }
+.day-index-list { display:grid; grid-template-columns:minmax(0,1fr); align-items:stretch; gap:14px; width:100%; min-width:0; }
 .day-index-list .day-overview-card { margin:0; }
 .day-index-empty { display:grid; justify-items:start; gap:12px; padding:16px; border:1px dashed var(--line); border-radius:var(--radius-md); }
 .day-map-empty { overflow-wrap:anywhere; }
@@ -734,4 +734,4 @@ html:lang(zh-CN) .ledger-bill-title-row h3 { font-weight: 500; }
 .day-page-route h3,.day-page-itinerary h3 { margin:0 0 12px; color:var(--ink); font-size:20px; }
 #day-page[hidden],#home-content[hidden] { display:none !important; }
 @media(max-width:600px) { .flight-carousel { gap:9px; } .mini-boarding-pass { flex-basis:86%; min-height:215px; padding:13px 11px; } .flight-carousel--single .mini-boarding-pass { flex-basis:90%; } }
-@media(min-width:700px) { .day-index-list { grid-template-columns:repeat(2,minmax(0,1fr)); } .day-overview-card { grid-template-columns:105px minmax(110px,.45fr) minmax(180px,1fr) minmax(180px,1.2fr); align-items:center; padding-right:48px; } .day-overview-card__meta,.day-overview-card > strong { white-space:nowrap; } .trip-overview-route { flex-direction:column; align-items:flex-start; gap:24px; } .trip-overview-route li + li::before { left:8px; top:-23px; } }
+@media(min-width:700px) { .day-index-list { grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; } .trip-overview-route { flex-direction:column; align-items:flex-start; gap:24px; } .trip-overview-route li + li::before { left:8px; top:-23px; } }
