@@ -73,8 +73,61 @@ test("no target day awaits a manual date; manual add works before majority", () 
   assert.equal(manual.inspirations[0].status, "manual_added");
   assert.equal(manual.inspirations[0].targetDate, "2026-12-02");
   assert.equal(manual.days[1].schedule[0].id, manual.inspirations[0].linkedItineraryItemId);
+  assert.equal(manual.days[1].schedule[0].date, "2026-12-02");
+  assert.equal(manual.days[1].schedule[0].time, "", "adding an inspiration never invents a time");
   assert.equal(store.manuallyAddInspiration(manual, "spot-1", "day-1"), false);
   assert.equal(manual.days[0].schedule.length, 0);
+});
+
+test("date-range-generated empty Days can be selected for inspiration and adding is idempotent", () => {
+  const snapshot = store.createInitialContent({ metadata: { tripId: "inspiration-calendar" }, trip: { startDate: "2026-12-20", endDate: "2026-12-22" } });
+  snapshot.inspirations = [{ id: "spot-calendar", title: "Fixture place", locationName: "Fixture cafe", sourceUrl: "", votes: [] }];
+  assert.equal(snapshot.days.length, 3);
+  assert.equal(snapshot.days[1].schedule.length, 0);
+  assert.equal(store.manuallyAddInspiration(snapshot, "spot-calendar", snapshot.days[1].id), true);
+  const record = snapshot.inspirations[0];
+  const item = snapshot.days[1].schedule[0];
+  assert.equal(item.date, "2026-12-21");
+  assert.equal(item.location, "Fixture cafe");
+  assert.equal(item.time, "");
+  assert.equal(record.targetDate, "2026-12-21");
+  assert.equal(record.targetDay, snapshot.days[1].id);
+  assert.equal(record.linkedItineraryItemId, item.id);
+  assert.equal(store.manuallyAddInspiration(snapshot, "spot-calendar", snapshot.days[1].id), false);
+  assert.equal(snapshot.days[1].schedule.length, 1);
+});
+
+test("manual selection and majority auto-add share the same stable item creation path", () => {
+  const snapshot = store.createInitialContent({ metadata: { tripId: "inspiration-vote-calendar" }, trip: { startDate: "2026-12-20", endDate: "2026-12-22" } });
+  snapshot.inspirations = [{ id: "spot-vote", title: "Vote fixture", locationName: "Real user-entered name", targetDate: "2026-12-21", votes: [], sourceUrl: "" }];
+  const cast = vote(snapshot, "spot-vote", 2);
+  cast("traveler-1");
+  cast("traveler-2");
+  const record = snapshot.inspirations[0];
+  assert.equal(record.status, "approved_added");
+  assert.equal(record.targetDay, snapshot.days[1].id);
+  assert.equal(record.targetDate, "2026-12-21");
+  assert.equal(snapshot.days[1].schedule.length, 1);
+  assert.equal(snapshot.days[1].schedule[0].date, "2026-12-21");
+  assert.equal(snapshot.days[1].schedule[0].time, "");
+  assert.equal(store.updateInspirationApproval(snapshot, record, ["traveler-1", "traveler-2"]), false);
+  assert.equal(snapshot.days[1].schedule.length, 1);
+});
+
+test("approved inspiration without a target stays pending, then selecting a date uses the shared add path", () => {
+  const snapshot = store.createInitialContent({ metadata: { tripId: "inspiration-pending-date" }, trip: { startDate: "2026-12-20", endDate: "2026-12-22" } });
+  snapshot.inspirations = [{ id: "spot-pending", title: "Pending fixture", locationName: "User entered place", targetDate: "", votes: [], sourceUrl: "" }];
+  const cast = vote(snapshot, "spot-pending", 2);
+  cast("traveler-1"); cast("traveler-2");
+  const record = snapshot.inspirations[0];
+  assert.equal(record.status, "approved_pending_day");
+  assert.equal(snapshot.days.every((day) => day.schedule.length === 0), true);
+  record.targetDay = snapshot.days[2].id;
+  record.targetDate = snapshot.days[2].date;
+  assert.equal(store.updateInspirationApproval(snapshot, record, ["traveler-1", "traveler-2"]), true);
+  assert.equal(record.status, "approved_added");
+  assert.equal(snapshot.days[2].schedule[0].date, "2026-12-22");
+  assert.equal(snapshot.days[2].schedule[0].time, "");
 });
 
 test("dropping below majority updates status but never removes a linked or edited schedule item", () => {
@@ -144,6 +197,8 @@ test("D1 content snapshot round-trip preserves votes, status and linked day with
     assert.equal(roundTrip.inspirations[0].status, "approved_added");
     assert.equal(roundTrip.inspirations[0].linkedItineraryItemId, "inspiration-item-spot-1");
     assert.equal(roundTrip.days[0].schedule.length, 1);
+    assert.equal(roundTrip.days[0].schedule[0].date, "2026-12-01");
+    assert.equal(roundTrip.days[0].schedule[0].time, "");
   } finally { global.fetch = originalFetch; }
 });
 
@@ -176,4 +231,9 @@ test("inspiration and Day map layouts reflow under the mobile breakpoint and kee
   assert.match(css, /\.inspiration-form-grid\s*\{\s*grid-template-columns:minmax\(0,1fr\)/);
   assert.match(css, /\.itinerary-map__viewport\s*\{[^}]*width:100%;/);
   assert.match(css, /\.itinerary-map__stops\s*\{\s*display:grid;\s*grid-template-columns:minmax\(0,1fr\)/);
+  assert.match(css, /\.inspiration-day-option\s*\{[^}]*min-width:0/s);
+  assert.match(css, /\.inspiration-day-dialog\s*\{[^}]*max-width:560px/s);
+  assert.match(pageSource, /data-inspiration-day-form/);
+  assert.match(pageSource, /data-inspiration-day-dialog/);
+  assert.match(pageSource, /DAY \$\{String\(index \+ 1\)\.padStart\(2, "0"\)\}/);
 });

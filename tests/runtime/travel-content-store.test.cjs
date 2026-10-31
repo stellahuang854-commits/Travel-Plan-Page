@@ -65,6 +65,53 @@ test("legacy snapshots without trip dates fall back to existing package dates wi
   assert.equal(loaded.metadata.endDate, "2028-05-05");
 });
 
+test("trip date metadata creates every Day window, including empty middle days, without replacing legacy days", () => {
+  const source = { metadata: { tripId: "calendar-days" }, trip: { startDate: "2026-12-20", endDate: "2026-12-24" }, days: [{ id: "legacy-extra", date: "2026-12-28", day: 9, title: "Legacy extra day", schedule: [{ id: "legacy-item", time: "" }] }] };
+  const snapshot = storeApi.createInitialContent(source);
+  assert.deepEqual(snapshot.days.filter((day) => day.date >= "2026-12-20" && day.date <= "2026-12-24").map((day) => day.date), ["2026-12-20", "2026-12-21", "2026-12-22", "2026-12-23", "2026-12-24"]);
+  assert.equal(snapshot.days.find((day) => day.date === "2026-12-22").schedule.length, 0);
+  assert.equal(snapshot.days.find((day) => day.date === "2026-12-28").id, "legacy-extra");
+  const ids = snapshot.days.map((day) => day.id);
+  storeApi.ensureDaysForDateRange(snapshot);
+  assert.deepEqual(snapshot.days.map((day) => day.id), ids, "date generation is idempotent and keeps stable IDs");
+  snapshot.metadata.startDate = "2026-12-21";
+  snapshot.metadata.endDate = "2026-12-23";
+  storeApi.ensureDaysForDateRange(snapshot);
+  assert.deepEqual(snapshot.days.filter((day) => day.calendarGenerated).map((day) => day.date).sort(), ["2026-12-21", "2026-12-22", "2026-12-23"]);
+  assert.equal(snapshot.days.find((day) => day.id === "legacy-extra").date, "2026-12-28");
+  snapshot.metadata.startDate = ""; snapshot.metadata.endDate = "";
+  storeApi.ensureDaysForDateRange(snapshot);
+  assert.deepEqual(snapshot.days.map((day) => day.id), ["legacy-extra"], "clearing dates only removes empty generated windows and preserves legacy itinerary data");
+});
+
+test("saved and legacy local snapshots materialize missing date-range Days on load and save", () => {
+  const storage = memoryStorage();
+  const store = storeApi.createStore("calendar-reload", storage);
+  const first = store.load({ metadata: { tripId: "calendar-reload" }, trip: { startDate: "2026-12-20", endDate: "2026-12-22" } });
+  assert.equal(first.days.length, 3);
+  assert.deepEqual(first.days.map((day) => day.schedule.length), [0, 0, 0]);
+  const original = storeApi.createInitialContent({ metadata: { tripId: "calendar-reload" } });
+  original.metadata = { title: "Old snapshot", startDate: "2026-12-20", endDate: "2026-12-22" };
+  storage.setItem(store.storageKey, JSON.stringify(original));
+  assert.deepEqual(store.load().days.map((day) => day.date), ["2026-12-20", "2026-12-21", "2026-12-22"]);
+  store.save(store.load());
+  assert.deepEqual(store.load().days.map((day) => day.id), ["calendar-day-2026-12-20", "calendar-day-2026-12-21", "calendar-day-2026-12-22"]);
+});
+
+test("deleting the final itinerary item keeps the calendar Day and its route date intact", () => {
+  const store = storeApi.createStore("calendar-delete-item", memoryStorage());
+  const content = store.load({ metadata: { tripId: "calendar-delete-item" }, trip: { startDate: "2026-12-20", endDate: "2026-12-22" } });
+  const day = content.days[1];
+  day.schedule.push({ id: "fixture-item", date: day.date, time: "", text: "Fixture only", location: "Fixture place" });
+  store.save(content);
+  const changed = store.load();
+  changed.days[1].schedule = [];
+  const afterDelete = store.save(changed);
+  assert.equal(afterDelete.days.length, 3);
+  assert.equal(afterDelete.days[1].date, "2026-12-21");
+  assert.equal(afterDelete.days[1].schedule.length, 0);
+});
+
 test("snapshots persist per trip and preserve unknown records from other collections", () => {
   const storage = memoryStorage();
   storage.setItem("travel-plan:runtime:v1:trip-a", JSON.stringify({ bills: [{ id: "bill-1" }], tickets: [{ id: "ticket-1" }], travelers: [{ id: "person-1" }], settings: { keep: true } }));

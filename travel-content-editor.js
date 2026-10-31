@@ -797,6 +797,8 @@
       const index = next.inspirations.findIndex((item) => item.id === id);
       if (index >= 0) next.inspirations[index] = record;
       else next.inspirations.unshift(record);
+      const travelers = window.TravelLedger?.getSnapshot?.()?.travelers || [];
+      window.TravelContentStore.updateInspirationApproval(next, record, travelers.map((person) => person.id));
     }, "种草记录已保存。");
   }
 

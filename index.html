@@ -8,23 +8,23 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>AI 旅行网页模板</title>
-  <link rel="stylesheet" href="styles.css?v=20261031-phase7-1">
+  <link rel="stylesheet" href="styles.css?v=20261031-day-windows-1">
   <link rel="stylesheet" href="ledger.css?v=20261030-phase4-6">
-  <link rel="stylesheet" href="travel-inspiration.css?v=20261031-phase7-1">
-  <script src="travel-content-store.js?v=20261031-phase7-1" defer></script>
+  <link rel="stylesheet" href="travel-inspiration.css?v=20261031-day-windows-1">
+  <script src="travel-content-store.js?v=20261031-day-windows-1" defer></script>
   <script src="travel-content-view.js?v=20261031-phase6-home-days-1" defer></script>
   <script src="travel-attachment-store.js?v=20261031-phase5-1" defer></script>
-  <script src="travel-content-editor.js?v=20261031-phase7-1" defer></script>
+  <script src="travel-content-editor.js?v=20261031-day-windows-1" defer></script>
   <script src="travel-phase3-services.js?v=20261030-phase3-2" defer></script>
   <script src="cloud-client.js?v=20261030-phase5-1" defer></script>
   <script src="cloud-migration.js?v=20261030-phase5-1" defer></script>
   <script src="runtime-storage.js?v=20260910-2" defer></script>
   <script src="overview-map.js?v=20260910-2" defer></script>
   <script src="route-ui.js?v=20261031-phase7-1" defer></script>
-  <script src="app.js?v=20261031-phase7-1" defer></script>
+  <script src="app.js?v=20261031-day-windows-1" defer></script>
   <script src="ticket-pdf-preview.js?v=20260910-2" defer></script>
   <script src="ledger.js?v=20261031-phase7-1" defer></script>
-  <script src="travel-inspiration.js?v=20261031-phase7-1" defer></script>
+  <script src="travel-inspiration.js?v=20261031-day-windows-1" defer></script>
   <script src="site-navigation.js?v=20261031-phase7-1" defer></script>
 </head>
 <body>
@@ -56,7 +56,7 @@
     </section>
 
     <section class="day-page section" id="day-page" hidden aria-labelledby="day-page-title">
-      <a class="day-page-back" href="#top">← 返回旅行总览</a>
+      <a class="day-page-back" href="#day-index">← 返回每日行程总览</a>
       <header class="day-page-tag" aria-label="当天标签">
         <p class="day-page-tag__index" id="day-page-kicker">DAY</p>
         <h2 id="day-page-title"></h2>
@@ -94,6 +94,14 @@
       </div>
       <div id="route-explorer"></div>
       <p class="route-caption">路线为行程示意，实际驾驶和步行请使用当天的 Google Maps 导航。</p>
+    </section>
+
+    <section class="section day-index-section" id="day-index" aria-labelledby="day-index-title">
+      <div class="section-heading">
+        <div><p class="section-kicker">DAY BY DAY</p><h2 id="day-index-title">每日行程</h2></div>
+        <span class="soft-label" id="home-day-count"></span>
+      </div>
+      <div class="day-index-list" id="day-index-list"></div>
     </section>
 
     <section class="section itinerary-section" id="itinerary" aria-labelledby="itinerary-title" data-module="itinerary" hidden>

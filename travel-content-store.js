@@ -118,6 +118,56 @@
     }];
   }
 
+  function ensureDaysForDateRange(content) {
+    if (!content || typeof content !== "object") return content;
+    content.days = Array.isArray(content.days) ? content.days : [];
+    const start = String(content.metadata?.startDate || "");
+    const end = String(content.metadata?.endDate || "");
+    const valid = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
+    const validRange = valid(start) && valid(end) && end >= start;
+    if ((!start && !end) || validRange) {
+      const range = validRange ? [start, end] : null;
+      const protectedByReference = (day) =>
+        (content.connections || []).some((item) => item.dayId === day.id) ||
+        (content.transportRecords || []).some((item) => item.dayIds?.includes(day.id) || item.date === day.date || (item.passengerJourneys || []).some((journey) => journey.date === day.date || journey.arrivalDate === day.date)) ||
+        (content.accommodations || []).some((item) => item.dayIds?.includes(day.id) || item.checkInDate === day.date || item.checkOutDate === day.date) ||
+        (content.restaurants || []).some((item) => item.date === day.date);
+      const knownKeys = new Set(["id", "day", "date", "title", "locations", "schedule", "notes", "calendarGenerated"]);
+      content.days = content.days.filter((day) => {
+        if (!day?.calendarGenerated) return true;
+        if (range && day.date >= range[0] && day.date <= range[1]) return true;
+        const hasExtraFields = Object.keys(day).some((key) => !knownKeys.has(key));
+        const hasUserContent = String(day.title || "").trim() || (day.locations || []).length || (day.schedule || []).length || (day.notes || []).length;
+        return Boolean(hasExtraFields || hasUserContent || protectedByReference(day));
+      });
+    }
+    if (!validRange) return content;
+    const first = Date.parse(`${start}T00:00:00Z`);
+    const last = Date.parse(`${end}T00:00:00Z`);
+    const count = Math.floor((last - first) / 86400000) + 1;
+    if (count > 3660) throw new Error("旅行日期范围过长，无法安全生成每日行程。");
+    const byDate = new Map();
+    content.days.forEach((day) => { if (day?.date && !byDate.has(String(day.date))) byDate.set(String(day.date), day); });
+    const ids = new Set(content.days.map((day) => String(day?.id || "")));
+    for (let index = 0; index < count; index += 1) {
+      const date = new Date(first + index * 86400000).toISOString().slice(0, 10);
+      const existing = byDate.get(date);
+      if (existing) {
+        existing.day = index + 1;
+        existing.schedule = Array.isArray(existing.schedule) ? existing.schedule : [];
+        continue;
+      }
+      let id = `calendar-day-${date}`;
+      let suffix = 1;
+      while (ids.has(id)) id = `calendar-day-${date}-${suffix++}`;
+      ids.add(id);
+      const day = { id, day: index + 1, date, title: "", locations: [], schedule: [], notes: [], calendarGenerated: true };
+      content.days.push(day);
+      byDate.set(date, day);
+    }
+    return content;
+  }
+
   function createInitialContent(data = {}) {
     const days = withStableIds(data.days, "day");
     const scheduleIds = new Set();
@@ -140,7 +190,7 @@
       dayIds: Array.isArray(record.dayIds) ? record.dayIds : [],
       ticketIds: Array.isArray(record.ticketIds) ? record.ticketIds : []
     })).filter((record) => record.type !== "flight" && record.type !== "rental-car-driving");
-    return {
+    const content = {
       version: VERSION,
       tripId: String(data.metadata?.tripId || ""),
       metadata: {
@@ -157,6 +207,7 @@
       inspirations: [],
       updatedAt: new Date().toISOString()
     };
+    return ensureDaysForDateRange(content);
   }
 
   function safeInspirationUrl(value) {
@@ -172,6 +223,7 @@
     const id = String(record.linkedItineraryItemId || `inspiration-item-${record.id}`);
     return {
       id,
+      date: String(day?.date || ""),
       time: "",
       endTime: "",
       text: String(record.title || record.locationName || "旅行灵感"),
@@ -217,20 +269,25 @@
       record.status = "approved_added";
       return false;
     }
-    const target = content.days.find((day) => (record.targetDay && day.id === record.targetDay) || (!record.targetDay && record.targetDate && day.date === record.targetDate));
+    const target = content.days.find((day) => (record.targetDay && day.id === record.targetDay) || (record.targetDate && day.date === record.targetDate));
     if (!target) { record.status = "approved_pending_day"; return false; }
-    const alreadyAdded = content.days.some((day) => (day.schedule || []).some((item) => item.sourceInspirationId === record.id));
-    if (alreadyAdded) {
-      const linked = content.days.flatMap((day) => day.schedule || []).find((item) => item.sourceInspirationId === record.id);
-      record.linkedItineraryItemId = linked?.id || `inspiration-item-${record.id}`;
-      record.status = "approved_added";
+    return addInspirationToDay(content, record, target, now, "approved_added");
+  }
+
+  function addInspirationToDay(content, record, day, now, status) {
+    const linked = content.days.flatMap((entry) => entry.schedule || []).find((item) => item.sourceInspirationId === record.id);
+    if (record.linkedItineraryItemId || linked) {
+      record.linkedItineraryItemId = record.linkedItineraryItemId || linked.id;
+      record.status = status === "approved_added" ? "approved_added" : "manual_added";
       return false;
     }
-    const item = createInspirationItineraryItem(record, target, now);
-    target.schedule = Array.isArray(target.schedule) ? target.schedule : [];
-    target.schedule.push(item);
+    const item = createInspirationItineraryItem(record, day, now);
+    day.schedule = Array.isArray(day.schedule) ? day.schedule : [];
+    day.schedule.push(item);
+    record.targetDay = day.id;
+    record.targetDate = day.date || "";
     record.linkedItineraryItemId = item.id;
-    record.status = "approved_added";
+    record.status = status;
     return true;
   }
 
@@ -238,15 +295,7 @@
     const record = content.inspirations.find((item) => item.id === inspirationId);
     const day = content.days.find((item) => item.id === dayId);
     if (!record || !day) throw new Error("请选择有效的灵感记录和旅行日期。");
-    if (record.linkedItineraryItemId || content.days.some((item) => (item.schedule || []).some((entry) => entry.sourceInspirationId === record.id))) return false;
-    const itineraryItem = createInspirationItineraryItem(record, day, now);
-    day.schedule = Array.isArray(day.schedule) ? day.schedule : [];
-    day.schedule.push(itineraryItem);
-    record.targetDay = day.id;
-    record.targetDate = day.date || "";
-    record.linkedItineraryItemId = itineraryItem.id;
-    record.status = "manual_added";
-    return true;
+    return addInspirationToDay(content, record, day, now, "manual_added");
   }
 
   function normalizeTodos(todos, categories) {
@@ -370,13 +419,15 @@
       if (parsed && typeof parsed === "object" && (!parsed.metadata || typeof parsed.metadata !== "object" || typeof parsed.metadata.title !== "string")) parsed.metadata = { ...(parsed.metadata && typeof parsed.metadata === "object" ? parsed.metadata : {}), title: String(data?.metadata?.title || "") };
       if (parsed.metadata.startDate === undefined) parsed.metadata.startDate = String(data?.trip?.startDate || "");
       if (parsed.metadata.endDate === undefined) parsed.metadata.endDate = String(data?.trip?.endDate || "");
+      ensureDaysForDateRange(parsed);
       validate(parsed, String(tripId));
       return clone(parsed);
     }
 
     function save(content) {
-      validate(content, String(tripId));
-      const next = { ...clone(content), updatedAt: new Date().toISOString() };
+      const next = ensureDaysForDateRange(clone(content));
+      validate(next, String(tripId));
+      next.updatedAt = new Date().toISOString();
       let serialized;
       try {
         serialized = JSON.stringify(next);
@@ -410,14 +461,16 @@
       if (!content.metadata || typeof content.metadata !== "object" || typeof content.metadata.title !== "string") content.metadata = { ...(content.metadata && typeof content.metadata === "object" ? content.metadata : {}), title: String(data?.metadata?.title || "") };
       if (content.metadata.startDate === undefined) content.metadata.startDate = String(data?.trip?.startDate || "");
       if (content.metadata.endDate === undefined) content.metadata.endDate = String(data?.trip?.endDate || "");
+      ensureDaysForDateRange(content);
       validate(content, id);
       return clone(content);
     }
 
     async function save(content) {
-      validate(content, id);
+      const prepared = ensureDaysForDateRange(clone(content));
+      validate(prepared, id);
       if (!Number.isSafeInteger(revision)) throw new Error("云端版本尚未载入，请刷新页面后重试。");
-      const next = { ...clone(content), updatedAt: new Date().toISOString() };
+      const next = { ...prepared, updatedAt: new Date().toISOString() };
       const response = await fetch(endpoint, {
         method: "PUT",
         headers: { "content-type": "application/json", "if-match": `\"${revision}\"` },
@@ -432,7 +485,7 @@
     return Object.freeze({ tripId: id, mode: "d1", load, save, getRevision: () => revision });
   }
 
-  const api = Object.freeze({ VERSION, COLLECTIONS, TRANSPORT_TYPES, DEFAULT_CATEGORIES, createStore, createCloudStore, createInitialContent, normalizeTransportType, normalizeJourneyRole, journeyRoleFor, normalizePassengerJourneys, passengerJourneyAttachmentKey, normalizeTodos, moveTasksBeforeCategoryDelete, safeInspirationUrl, isInspirationPassed, applyInspirationVote, updateInspirationApproval, manuallyAddInspiration, validate, keyFor });
+  const api = Object.freeze({ VERSION, COLLECTIONS, TRANSPORT_TYPES, DEFAULT_CATEGORIES, createStore, createCloudStore, createInitialContent, ensureDaysForDateRange, normalizeTransportType, normalizeJourneyRole, journeyRoleFor, normalizePassengerJourneys, passengerJourneyAttachmentKey, normalizeTodos, moveTasksBeforeCategoryDelete, safeInspirationUrl, isInspirationPassed, applyInspirationVote, updateInspirationApproval, manuallyAddInspiration, validate, keyFor });
   if (typeof window !== "undefined") window.TravelContentStore = api;
   if (typeof module === "object" && module.exports) module.exports = api;
 })();

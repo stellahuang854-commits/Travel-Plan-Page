@@ -61,6 +61,9 @@ test("D1 content endpoint snapshot, rather than the static trip package, feeds t
     assert.equal(afterReload.metadata.title, "Edited title from this device");
     assert.equal(afterReload.metadata.startDate, "2030-09-02");
     assert.equal(afterReload.metadata.endDate, "2030-09-10");
+    assert.equal(afterReload.days.length, 9, "D1 snapshots with date metadata expose the complete Day range on another device");
+    assert.deepEqual(afterReload.days.map((day) => day.date).slice(0, 2), ["2030-09-02", "2030-09-03"]);
+    assert.equal(remoteContent.days.length, 9, "the next normal D1 save persists generated Day records in the existing snapshot");
     const html = view.renderPublicContent(afterReload);
     assert.match(html, /Saved in D1/);
     assert.match(html, /Saved remotely/);
@@ -79,6 +82,7 @@ test("older D1 content without title or dates falls back to the existing package
     assert.equal(loaded.metadata.title, "Original metadata name");
     assert.equal(loaded.metadata.startDate, "2031-06-01");
     assert.equal(loaded.metadata.endDate, "2031-06-04");
+    assert.deepEqual(loaded.days.map((day) => day.date), ["2031-06-01", "2031-06-02", "2031-06-03", "2031-06-04"]);
     assert.deepEqual(loaded.connections, []);
   } finally { global.fetch = previousFetch; }
 });

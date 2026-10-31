@@ -6,6 +6,7 @@
   const platforms = ["小红书", "抖音", "TikTok", "Instagram", "YouTube", "Bilibili", "微博", "大众点评", "网页", "Other"];
   let options = null;
   let filterItemId = "";
+  let dayPickerNotice = "";
 
   function content() { return options?.getContent?.() || window.TravelContentEditor?.getContent?.() || {}; }
   function travelers() { return window.TravelLedger?.getSnapshot?.()?.travelers || []; }
@@ -50,7 +51,7 @@
         const url = window.TravelContentStore.safeInspirationUrl(record.sourceUrl || "");
         const mapUrl = providerUrl(record);
         const hasVoted = (record.votes || []).some((vote) => String(vote.travelerId) === currentId && vote.value === "yes");
-        const targetValue = record.targetDay || "";
+      const linkedDay = days.find((day) => day.id === record.targetDay || day.date === record.targetDate || (day.schedule || []).some((item) => item.id === record.linkedItineraryItemId || item.sourceInspirationId === record.id));
         const attachmentId = `inspiration:${record.id}`;
         const category = record.category || "旅行灵感";
         return `<article class="inspiration-card" data-inspiration-card="${esc(record.id)}">
@@ -59,10 +60,15 @@
           ${record.note ? `<p class="inspiration-note">${esc(record.note)}</p>` : ""}
           <p class="inspiration-status">${esc(statusText(record))}</p>
           <p class="inspiration-votes">♥ ${count} / ${people.length} 想去</p>
-          <div class="inspiration-actions">${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">打开原帖 ↗</a>` : ""}${mapUrl ? `<a href="${esc(mapUrl)}" target="_blank" rel="noopener noreferrer">打开地图 ↗</a>` : ""}<button type="button" data-inspiration-vote="${esc(record.id)}" aria-pressed="${hasVoted}"${people.length ? "" : " disabled"}>${hasVoted ? "取消想去" : "想去"}</button><button type="button" data-inspiration-attachments="${esc(record.id)}" data-owner="${esc(attachmentId)}">附件</button><button type="button" data-inspiration-add-day="${esc(record.id)}">加入某一天</button><button type="button" data-inspiration-edit="${esc(record.id)}">编辑</button><button type="button" data-inspiration-delete="${esc(record.id)}">删除</button></div>
-          ${days.length ? `<label class="inspiration-day-select">选择日期<select data-inspiration-day="${esc(record.id)}"><option value="">选择一天</option>${days.map((day) => `<option value="${esc(day.id)}"${targetValue === day.id ? " selected" : ""}>${esc(day.date || "日期待补充")} · ${esc(day.title || `DAY ${day.day || ""}`)}</option>`).join("")}</select></label>` : `<small>请先添加旅行日期，再加入行程。</small>`}
+          <div class="inspiration-actions">${url ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">打开原帖 ↗</a>` : ""}${mapUrl ? `<a href="${esc(mapUrl)}" target="_blank" rel="noopener noreferrer">打开地图 ↗</a>` : ""}<button type="button" data-inspiration-vote="${esc(record.id)}" aria-pressed="${hasVoted}"${people.length ? "" : " disabled"}>${hasVoted ? "取消想去" : "想去"}</button><button type="button" data-inspiration-attachments="${esc(record.id)}" data-owner="${esc(attachmentId)}">附件</button>${record.linkedItineraryItemId && linkedDay ? `<a class="inspiration-day-link" href="#day/${encodeURIComponent(linkedDay.date || `id=${linkedDay.id}`)}">查看当天行程 →</a>` : `<button type="button" data-inspiration-add-day="${esc(record.id)}">加入某一天</button>`}<button type="button" data-inspiration-edit="${esc(record.id)}">编辑</button><button type="button" data-inspiration-delete="${esc(record.id)}">删除</button></div>
         </article>`;
       }).join("") || `<div class="inspiration-empty"><strong>还没有旅行灵感</strong><p>添加你自己保存的社交平台或网页链接。</p><button class="inspiration-primary" type="button" data-inspiration-add>＋ 添加第一条</button></div>`}</div>
+      ${dayPickerNotice ? `<p class="inspiration-join-success" role="status" aria-live="polite">${dayPickerNotice}</p>` : ""}
+      <dialog class="inspiration-dialog inspiration-day-dialog" data-inspiration-day-dialog><form data-inspiration-day-form><header><div><small>ADD TO ITINERARY</small><h2>加入行程</h2></div><button type="button" data-inspiration-day-close>关闭</button></header><input type="hidden" name="inspirationId"><fieldset class="inspiration-day-options"><legend>选择一天</legend>${days.map((day, index) => {
+        const dayPlaces = [...new Set([...(day.locations || []), ...(day.schedule || []).map((item) => item.location || item.placeName).filter(Boolean)])];
+        const summary = dayPlaces.join(" · ") || "尚未安排";
+        return `<label class="inspiration-day-option"><input type="radio" name="dayId" value="${esc(day.id)}"${index === 0 ? " checked" : ""}><span><strong>DAY ${String(index + 1).padStart(2, "0")} · ${esc(day.date || "日期待补充")}</strong><small>${esc(summary)}</small></span></label>`;
+      }).join("") || `<p class="inspiration-form-error">请先设置旅行开始与结束日期，系统会自动生成每日行程。</p>`}</fieldset><p class="inspiration-form-error" data-inspiration-day-error role="status"></p><div class="inspiration-form-actions"><button type="button" data-inspiration-day-close>取消</button><button class="inspiration-primary" type="submit"${days.length ? "" : " disabled"}>加入</button></div></form></dialog>
       <dialog class="inspiration-dialog" data-inspiration-dialog><form data-inspiration-form method="dialog"><header><div><small>TRAVEL INSPIRATION</small><h2 data-inspiration-form-title>添加种草</h2></div><button type="button" data-inspiration-close>关闭</button></header><input type="hidden" name="id"><div class="inspiration-form-grid"><label>标题<input name="title" maxlength="140" required></label><label>地点名称<input name="locationName" maxlength="140"></label><label>类别<input name="category" maxlength="60" placeholder="景点、餐厅、咖啡店…"></label><label>城市<input name="city" maxlength="80"></label><label>地区<input name="region" maxlength="80"></label><label>平台${platformMarkup()}</label><label class="inspiration-url-field">原帖链接<input name="sourceUrl" type="url" inputmode="url" placeholder="https://…"><small>仅保存你粘贴的链接，不抓取内容；仅允许 http / https。</small></label><label>纬度（可选）<input name="latitude" type="number" min="-90" max="90" step="any"></label><label>经度（可选）<input name="longitude" type="number" min="-180" max="180" step="any"></label><label>地图服务<select name="mapProvider"><option value="google">Google Maps</option><option value="apple">Apple Maps</option><option value="openstreetmap">OpenStreetMap</option><option value="amap">高德地图</option></select></label><label class="inspiration-note-field">备注<textarea name="note" rows="3" maxlength="1000"></textarea></label><label>目标日期（可选）<select name="targetDay"><option value="">暂不指定</option>${days.map((day) => `<option value="${esc(day.id)}">${esc(day.date || "日期待补充")} · ${esc(day.title || `DAY ${day.day || ""}`)}</option>`).join("")}</select></label><label class="inspiration-note-field">关联现有行程地点（可选）<select name="linkedItineraryItemId"><option value="">不关联</option>${itineraryItems.map(({ day, item }) => `<option value="${esc(item.id)}">${esc(day.date || "日期待补充")} · ${esc(day.title || `DAY ${day.day || ""}`)} · ${esc(item.location || item.placeName || item.text || item.title || "行程地点")}</option>`).join("")}</select><small>多个种草记录可以关联同一地点；投票通过时不会重复创建地点。</small></label></div><p class="inspiration-form-error" data-inspiration-error role="status"></p><div class="inspiration-form-actions"><button type="button" data-inspiration-close>取消</button><button class="inspiration-primary" type="submit">保存种草</button></div></form></dialog>
     </div>`;
     const selector = host.querySelector("#inspiration-voter-select");
@@ -93,6 +99,42 @@
     const dialog = host.querySelector("[data-inspiration-dialog]");
     if (dialog?.showModal) dialog.showModal(); else dialog?.setAttribute("open", "");
     form.elements.title.focus({ preventScroll: true });
+  }
+
+  function openDayPicker(recordId) {
+    const host = root();
+    const dialog = host?.querySelector("[data-inspiration-day-dialog]");
+    const form = dialog?.querySelector("[data-inspiration-day-form]");
+    const record = (content().inspirations || []).find((item) => item.id === recordId);
+    if (!dialog || !form || !record) return;
+    form.reset();
+    form.elements.inspirationId.value = record.id;
+    const days = [...(content().days || [])].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+    const selected = days.find((day) => day.id === record.targetDay || day.date === record.targetDate);
+    if (selected) { const radio = [...form.querySelectorAll('input[name="dayId"]')].find((item) => item.value === selected.id); if (radio) radio.checked = true; }
+    const error = form.querySelector("[data-inspiration-day-error]");
+    if (error) error.textContent = "";
+    if (dialog.showModal) dialog.showModal(); else dialog.setAttribute("open", "");
+  }
+
+  async function submitDayPicker(form) {
+    const values = new FormData(form);
+    const inspirationId = String(values.get("inspirationId") || "");
+    const dayId = String(values.get("dayId") || "");
+    const record = (content().inspirations || []).find((item) => item.id === inspirationId);
+    const days = [...(content().days || [])].sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")));
+    const day = days.find((item) => item.id === dayId);
+    if (!record || !day) { form.querySelector("[data-inspiration-day-error]").textContent = "请选择一个旅行日期。"; return; }
+    const added = await options.editor.addInspirationToDay(inspirationId, dayId);
+    if (!added) {
+      const current = (content().inspirations || []).find((item) => item.id === inspirationId);
+      if (!current?.linkedItineraryItemId) { form.querySelector("[data-inspiration-day-error]").textContent = "加入失败，请重试。"; return; }
+    }
+    const dayNumber = days.findIndex((item) => item.id === day.id) + 1;
+    const shortDate = String(day.date || "").slice(5).replace("-", "/");
+    dayPickerNotice = `已加入 DAY ${dayNumber} · ${esc(shortDate)} · <a href="#day/${encodeURIComponent(day.date || `id=${day.id}`)}">查看当天行程 →</a>`;
+    form.closest("dialog")?.close();
+    render();
   }
 
   async function submitForm(form) {
@@ -133,11 +175,16 @@
       const edit = event.target.closest("[data-inspiration-edit]"); if (edit) { openForm(edit.dataset.inspirationEdit); return; }
       const remove = event.target.closest("[data-inspiration-delete]"); if (remove) { await options.editor.deleteInspiration(remove.dataset.inspirationDelete); return; }
       const vote = event.target.closest("[data-inspiration-vote]"); if (vote) { try { await options.editor.voteInspiration(vote.dataset.inspirationVote, selectedTravelerId()); } catch (error) { window.alert(error.message || "投票失败。"); } return; }
-      const join = event.target.closest("[data-inspiration-add-day]"); if (join) { const dayId = host.querySelector(`[data-inspiration-day="${CSS.escape(join.dataset.inspirationAddDay)}"]`)?.value; if (!dayId) { window.alert("请先选择要加入的日期。"); return; } await options.editor.addInspirationToDay(join.dataset.inspirationAddDay, dayId); return; }
+      const join = event.target.closest("[data-inspiration-add-day]"); if (join) { openDayPicker(join.dataset.inspirationAddDay); return; }
+      const dayClose = event.target.closest("[data-inspiration-day-close]"); if (dayClose) { dayClose.closest("dialog")?.close(); return; }
       const attachment = event.target.closest("[data-inspiration-attachments]"); if (attachment) { window.dispatchEvent(new CustomEvent("travel-transport-detail", { detail: { id: `inspiration:${attachment.dataset.inspirationAttachments}`, transportId: `inspiration:${attachment.dataset.inspirationAttachments}`, type: "other", title: "种草附件", attachmentOnly: true } })); return; }
       if (event.target.closest("[data-inspiration-filter-clear]")) location.hash = "#inspiration";
     });
-    host.addEventListener("submit", (event) => { const form = event.target.closest("[data-inspiration-form]"); if (!form) return; event.preventDefault(); void submitForm(form); });
+    host.addEventListener("submit", (event) => {
+      const picker = event.target.closest("[data-inspiration-day-form]");
+      if (picker) { event.preventDefault(); void submitDayPicker(picker); return; }
+      const form = event.target.closest("[data-inspiration-form]"); if (!form) return; event.preventDefault(); void submitForm(form);
+    });
     window.addEventListener("travel-ledger:travelers-changed", (event) => { if (String(event.detail?.tripId || "") === String(options.tripId)) render(); });
     window.addEventListener("hashchange", render);
   }

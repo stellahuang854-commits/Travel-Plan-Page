@@ -30,11 +30,32 @@ test("homepage overview and each Day route derive their visible content from sav
   assert.match(app, /item\.date === routeKey/);
   assert.match(app, /item\.id === routeKey\.slice\(3\)/);
   assert.match(app, /TravelRouteUI\?\.renderItineraryDayMap\?\.\(day\)/);
-  assert.match(app, /DAY \$\{String\(day\.day \|\| 1\)\.padStart\(2, "0"\)\}/);
-  assert.match(app, /day\.city \|\| day\.region \|\| day\.cityOrArea \|\| places\[0\] \|\| day\.title/);
+  assert.match(app, /DAY \$\{String\(dayIndex \+ 1\)\.padStart\(2, "0"\)\}/);
+  assert.match(app, /function dayRegionLabel\(day\)/);
+  assert.match(app, /尚未设置地区/);
   assert.match(app, /function renderDayOverviewCard\(/);
   assert.match(app, /function renderTripOverview\(/);
   assert.match(app, /TravelContentEditor\?\.openDay\?\.\(day\.id\)/);
+  assert.match(fs.readFileSync(path.resolve(__dirname, "../../index.html"), "utf8"), /id="day-index-list"/);
+});
+
+test("homepage Day cards render empty date routes without guessing city or schedule values", () => {
+  const html = fs.readFileSync(path.resolve(__dirname, "../../index.html"), "utf8");
+  const esc = (value) => String(value).replace(/[&<>\'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
+  const functions = ["dayRegionLabel", "dayCardDateLabel", "renderDayOverviewCard"].map(functionSource).join("\n");
+  const render = new Function("window", "state", "escapeHtml", `${functions}\nreturn renderDayOverviewCard;`)(
+    { TravelContentEditor: { getContent: () => ({ connections: [] }) } },
+    { data: { groundTransport: { publicTransitAndRail: [] } } },
+    esc
+  );
+  const markup = render({ id: "calendar-day-2026-12-21", date: "2026-12-21", day: 2, schedule: [] }, 1);
+  assert.match(html, /id="day-index"/);
+  assert.match(markup, /DAY 02/);
+  assert.match(markup, /12\.21/);
+  assert.match(markup, /尚未设置地区/);
+  assert.match(markup, /尚未安排行程/);
+  assert.match(markup, /href="#day\/2026-12-21"/);
+  assert.doesNotMatch(markup, /Firenze|Milano|09:00/);
 });
 
 test("Day page has its own readable Day Tag, interactive map controls and per-location inspiration links", () => {
@@ -48,6 +69,30 @@ test("Day page has its own readable Day Tag, interactive map controls and per-lo
   assert.match(routeUi, /pointermove/);
   assert.match(app, /href="#inspiration\?item=/);
   assert.match(app, /打开地图|查看 \$\{escapeHtml\(destination\.label\)\} 的地图/);
+  assert.match(html, /href="#day-index">← 返回每日行程总览/);
+  assert.match(app, /这一天还没有可显示在地图上的地点/);
+});
+
+test("home exposes the Day index after the overview map and before later travel sections", () => {
+  const html = fs.readFileSync(path.resolve(__dirname, "../../index.html"), "utf8");
+  const overview = html.indexOf('id="trip-overview"');
+  const route = html.indexOf('id="route"');
+  const dayIndex = html.indexOf('id="day-index"');
+  const itinerary = html.indexOf('id="itinerary"');
+  assert.ok(overview >= 0 && overview < route && route < dayIndex && dayIndex < itinerary);
+  assert.match(html.slice(dayIndex, itinerary), /id="day-index-list"/);
+  assert.match(app, /renderTimeline\(\);\s*renderTripOverview\(\);\s*renderPageRoute\(\);/);
+});
+
+test("narrow Day cards and Day pages do not introduce a horizontal scroller", () => {
+  const css = fs.readFileSync(path.resolve(__dirname, "../../styles.css"), "utf8");
+  const inspirationCss = fs.readFileSync(path.resolve(__dirname, "../../travel-inspiration.css"), "utf8");
+  assert.match(css, /\.day-index-list\s*\{[^}]*grid-template-columns:minmax\(0,1fr\)/);
+  assert.match(css, /\.day-overview-card\s*\{[^}]*min-width:0/);
+  assert.match(css, /\.day-overview-card__summary\s*\{[^}]*overflow-wrap:anywhere/);
+  assert.match(inspirationCss, /\.inspiration-day-option\s*\{[^}]*min-width:0/);
+  assert.match(inspirationCss, /\.inspiration-day-option strong,.inspiration-day-option small\s*\{\s*overflow-wrap:anywhere/);
+  assert.match(inspirationCss, /@media\(max-width:640px\)\s*\{[\s\S]*?\.inspiration-day-option/);
 });
 
 test("daily map filtering includes only locations named by that day's itinerary", () => {

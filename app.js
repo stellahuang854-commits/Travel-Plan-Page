@@ -870,7 +870,7 @@ function dayCard(day) {
     const scheduleTickets = ticketsForSchedule(day, item).map(inlineTicketMarkup).join("");
     const scheduleMarkup = `
       <li class="schedule-item">
-          <span class="schedule-time">${escapeHtml(item.time)}${item.endTime ? ` – ${escapeHtml(item.endTime)}` : ""}</span>
+          <span class="schedule-time">${escapeHtml(item.time || "时间待定")}${item.endTime ? ` – ${escapeHtml(item.endTime)}` : ""}</span>
         <div class="schedule-content">
           <div class="schedule-text">${escapeHtml(item.text)}</div>
           ${item.details ? `<p class="detail-note">${escapeHtml(item.details)}</p>` : ""}
@@ -920,6 +920,7 @@ function dayCard(day) {
       </button>
       <div class="day-detail" id="day-detail-${day.day}" ${expanded ? "" : "hidden"}>
         <section class="day-weather" aria-label="每日天气" data-weather-panel="${escapeHtml(day.id)}"><div><strong>${escapeHtml(weatherPlaceLabel)}</strong><small>${escapeHtml(day.date || "日期待补充")}</small></div><button type="button" data-weather-day="${escapeHtml(day.id)}" ${weatherAvailable ? "" : "disabled"}>查询 Open-Meteo 天气</button><p>仅点击查询时发送此日地点和日期给 Open-Meteo；预报范围为未来 16 天。可不联网查看天气。</p><div class="day-weather-result" role="status" aria-live="polite"></div></section>
+        ${!items.length && !transportItems.length ? `<p class="trip-overview-empty day-itinerary-empty">尚未安排行程。可以从当天页面添加第一条安排。</p>` : ""}
         <ol class="schedule">${schedule}${transportSchedule}${staleMarkup}</ol>
         ${costs ? `<div class="costs">${costs}</div>` : ""}
         ${notes.map((note) => `<p class="detail-note">${escapeHtml(note)}</p>`).join("")}
@@ -1015,7 +1016,38 @@ function currentTripDay() {
 }
 
 function orderedTripDays() {
-  return [...(state.data?.days || [])].sort((first, second) => String(first.date || "").localeCompare(String(second.date || "")) || (Number(first.day) || 0) - (Number(second.day) || 0));
+  const days = window.TravelContentEditor?.getContent?.()?.days || state.data?.days || [];
+  return [...days].sort((first, second) => String(first.date || "").localeCompare(String(second.date || "")) || (Number(first.day) || 0) - (Number(second.day) || 0));
+}
+
+function dayRegionLabel(day) {
+  const labels = [day.city, day.region, day.cityOrArea];
+  for (const item of day.schedule || []) labels.push(item.city, item.region, item.cityOrArea, item.locationName, item.location, item.placeName);
+  const date = String(day.date || "");
+  const content = window.TravelContentEditor?.getContent?.() || {};
+  for (const stay of content.accommodations || []) {
+    const checkIn = String(stay.checkInDate || ""); const checkOut = String(stay.checkOutDate || "");
+    if (stay.dayIds?.includes(day.id) || date && checkIn && checkIn <= date && (!checkOut || date <= checkOut)) labels.push(stay.city, stay.region, stay.cityOrArea);
+  }
+  for (const record of content.transportRecords || []) {
+    if (record.date !== date && !(record.passengerJourneys || []).some((journey) => journey.date === date || journey.arrivalDate === date)) continue;
+    labels.push(record.to, record.from);
+    for (const journey of window.TravelContentStore?.normalizePassengerJourneys(record) || []) {
+      if (journey.date === date || journey.arrivalDate === date) labels.push(journey.to, journey.from);
+    }
+  }
+  if (date) for (const transport of state.data?.groundTransport?.publicTransitAndRail || []) {
+    if ((transport.date || transport.departure?.date) === date) labels.push(transport.to || transport.toPlace || transport.arrival?.station || transport.arrival?.place, transport.from || transport.fromPlace || transport.departure?.station || transport.departure?.place);
+  }
+  const unique = [...new Set(labels.map((value) => String(value || "").trim()).filter(Boolean))];
+  return unique.slice(0, 2).join(" · ") || "尚未设置地区";
+}
+
+function dayCardDateLabel(dateValue) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateValue || ""))) return "日期待补充";
+  const date = new Date(`${dateValue}T12:00:00`);
+  const weekday = new Intl.DateTimeFormat("en", { weekday: "short" }).format(date).toUpperCase();
+  return `${dateValue.slice(5, 7)}.${dateValue.slice(8, 10)} · ${weekday}`;
 }
 
 function renderTripOverview() {
@@ -1041,25 +1073,31 @@ function renderTripOverview() {
   const summary = [
     tripDays ? `<div><strong>${tripDays} DAYS</strong><span>旅行天数</span></div>` : "",
     content.accommodations?.length ? `<div><strong>${content.accommodations.length} 处</strong><span>住宿</span></div>` : "",
-    days.length ? `<div><strong>${days.length} 天</strong><span>已规划</span></div>` : "",
+    days.length ? `<div><strong>${days.length} 天</strong><span>每日行程</span></div>` : "",
     transportTypes.length ? `<div><strong>${escapeHtml(transportTypes.join(" · "))}</strong><span>主要交通</span></div>` : ""
   ].filter(Boolean).join("");
   host.innerHTML = `${summary ? `<div class="trip-overview-stats">${summary}</div>` : ""}${locations.length ? `<ol class="trip-overview-route">${locations.map((location) => `<li>${escapeHtml(location)}</li>`).join("")}</ol>` : `<p class="trip-overview-empty">还没有已规划的地点。添加每日行程后，这里会汇总真实路线。</p>`}`;
 }
 
 function renderDayOverviewCard(day, index) {
-  const locations = [...new Set([...(day.locations || []), ...(day.schedule || []).map((item) => item.location || item.placeName).filter(Boolean)])];
-  const highlights = (day.schedule || []).map((item) => item.text || item.title).filter(Boolean).slice(0, 3);
-  const placeSummary = locations.length ? locations.join(" → ") : "地点待补充";
-  const date = day.date ? displayTripDate(day.date) : "日期待补充";
+  const schedule = day.schedule || [];
+  const locations = [...new Set([...(day.locations || []), ...schedule.map((item) => item.location || item.placeName).filter(Boolean)])];
+  const connections = (window.TravelContentEditor?.getContent?.()?.connections || []).filter((item) => item.dayId === day.id);
+  const placeSummary = dayRegionLabel(day);
+  const details = schedule.length ? `${locations.length ? `${locations.length} 个地点` : `${schedule.length} 项安排`} · ${connections.length} 段交通` : "尚未安排行程";
   const routeKey = day.date || `id=${day.id}`;
-  return `<a class="day-overview-card" href="#day/${encodeURIComponent(routeKey)}" data-day-date="${escapeHtml(day.date || "")}"><span class="day-overview-card__meta">DAY ${String(day.day || index + 1).padStart(2, "0")}</span><strong>${escapeHtml(date)}</strong><span class="day-overview-card__places">${escapeHtml(placeSummary)}</span><span class="day-overview-card__summary">${escapeHtml(highlights.join(" · ") || "尚未添加当天安排")}</span><span class="day-overview-card__arrow" aria-hidden="true">→</span></a>`;
+  return `<a class="day-overview-card" href="#day/${encodeURIComponent(routeKey)}" data-day-date="${escapeHtml(day.date || "")}"><span class="day-overview-card__meta">DAY ${String(index + 1).padStart(2, "0")}</span><strong>${escapeHtml(dayCardDateLabel(day.date))}</strong><span class="day-overview-card__places">${escapeHtml(placeSummary)}</span><span class="day-overview-card__summary">${escapeHtml(details)}</span><span class="day-overview-card__arrow" aria-hidden="true">查看当天行程 →</span></a>`;
 }
 
 function renderTimeline() {
   const orderedDays = orderedTripDays();
   $("#day-count").textContent = `${orderedDays.length} DAYS`;
   $("#timeline").innerHTML = orderedDays.map(renderDayOverviewCard).join("") || `<p class="trip-overview-empty">还没有每日行程。可以从“管理资料”添加一天。</p>`;
+  const homeDays = $("#day-index-list");
+  if (homeDays) {
+    $("#home-day-count").textContent = orderedDays.length ? `${orderedDays.length} DAYS` : "";
+    homeDays.innerHTML = orderedDays.map(renderDayOverviewCard).join("") || `<div class="day-index-empty"><p class="trip-overview-empty">请先设置旅行开始与结束日期，这里会自动生成每日行程入口。</p><button type="button" class="travel-content-open" data-open-trip-dates>设置旅行日期</button></div>`;
+  }
   $("#day-timeline").onclick = (event) => {
     const editItem = event.target.closest("[data-edit-day-item]");
     if (editItem) { window.TravelContentEditor?.openDayItem?.(editItem.dataset.editDayItem, editItem.dataset.itemId); return; }
@@ -1107,7 +1145,7 @@ function renderTimeline() {
 function renderPageRoute() {
   const match = location.hash.match(/^#day\/(.+)$/);
   const routeKey = match ? decodeURIComponent(match[1]) : "";
-  const day = match ? state.data?.days?.find((item) => routeKey.startsWith("id=") ? item.id === routeKey.slice(3) : item.date === routeKey) : null;
+  const day = match ? orderedTripDays().find((item) => routeKey.startsWith("id=") ? item.id === routeKey.slice(3) : item.date === routeKey) : null;
   const home = $("#home-content");
   const page = $("#day-page");
   home.hidden = Boolean(match);
@@ -1121,16 +1159,23 @@ function renderPageRoute() {
     $("#day-timeline").innerHTML = "";
     return;
   }
-  $("#day-page-kicker").textContent = `DAY ${String(day.day || 1).padStart(2, "0")}`;
+  const dayIndex = orderedTripDays().findIndex((item) => item.id === day.id);
+  $("#day-page-kicker").textContent = `DAY ${String(dayIndex + 1).padStart(2, "0")}`;
   const date = /^\d{4}-\d{2}-\d{2}$/.test(String(day.date || "")) ? new Date(`${day.date}T12:00:00`) : null;
   const dateLabel = date ? `${String(date.getMonth() + 1).padStart(2, "0")}.${String(date.getDate()).padStart(2, "0")} ${new Intl.DateTimeFormat("en", { weekday: "short" }).format(date).toUpperCase()}` : "日期待补充";
   $("#day-page-title").textContent = dateLabel;
-  const places = [...new Set([...(day.locations || []), ...(day.schedule || []).map((item) => item.location || item.placeName).filter(Boolean)])];
-  $("#day-page-location").textContent = String(day.city || day.region || day.cityOrArea || places[0] || day.title || "当天地区待补充");
+  $("#day-page-location").textContent = dayRegionLabel(day);
   state.expandedDay = Number(day.day);
   $("#day-timeline").innerHTML = dayCard(day);
   const map = window.TravelRouteUI?.renderItineraryDayMap?.(day);
-  $("#day-route-map").innerHTML = map || `<div class="trip-overview-empty day-map-empty"><strong>当天地点尚无可用坐标</strong><p>地图只会绘制已填写或关联地点目录的真实坐标，不会推测位置。</p><button type="button" id="day-map-edit">补充地点 / 坐标</button></div>`;
+  const mapLabels = [...new Set([...(day.locations || []), ...(day.schedule || []).map((item) => item.location || item.placeName || item.text).filter(Boolean)])];
+  const mapLinks = mapLabels.map((label) => {
+    const url = window.TravelPhase3?.placeUrl?.("google", { label, query: label }) || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(label)}`;
+    return `<li><span>${escapeHtml(label)}</span><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">外部地图搜索 ↗</a></li>`;
+  }).join("");
+  $("#day-route-map").innerHTML = map || (mapLabels.length
+    ? `<div class="trip-overview-empty day-map-empty"><strong>当天地点还没有坐标</strong><p>可打开外部地图搜索，或在当天行程管理中补充真实坐标。</p><ul class="day-map-place-list">${mapLinks}</ul><button type="button" id="day-map-edit">编辑当天地点 / 坐标</button></div>`
+    : `<div class="trip-overview-empty day-map-empty"><strong>这一天还没有可显示在地图上的地点</strong><p>添加当天地点后，这里会显示真实坐标地图。</p><button type="button" id="day-map-edit">＋ 添加当天地点</button></div>`);
   window.TravelRouteUI?.activateDayMap?.($("#day-route-map"));
 }
 
@@ -1615,7 +1660,7 @@ async function init() {
         saveTodos: saveTodosBatch,
         renderTodos: renderTravelPrep,
         onDataChanged: () => {
-          if (moduleEnabled("itinerary")) renderTimeline();
+          renderTimeline();
           renderFlights();
           renderHero();
           renderTripOverview();
@@ -1640,10 +1685,14 @@ async function init() {
       }
     }
     renderHero();
-    if (moduleEnabled("itinerary")) renderTimeline();
+    renderTimeline();
     renderTripOverview();
     renderPageRoute();
     window.addEventListener("hashchange", renderPageRoute);
+    $("#day-index-list")?.addEventListener("click", (event) => {
+      if (!event.target.closest("[data-open-trip-dates]")) return;
+      window.TravelContentEditor?.openTab?.("tripInfo");
+    });
     $("#day-page-edit")?.addEventListener("click", () => {
       const match = location.hash.match(/^#day\/(.+)$/);
       const routeKey = match ? decodeURIComponent(match[1]) : "";
