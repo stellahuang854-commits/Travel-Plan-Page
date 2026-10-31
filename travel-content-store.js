@@ -3,7 +3,7 @@
 
   const VERSION = 1;
   const PREFIX = "travel-plan:content:v1";
-  const COLLECTIONS = Object.freeze(["accommodations", "transportRecords", "restaurants", "days", "todoCategories", "connections"]);
+  const COLLECTIONS = Object.freeze(["accommodations", "transportRecords", "restaurants", "days", "todoCategories", "connections", "inspirations"]);
   const TRANSPORT_TYPES = Object.freeze(["flight", "high-speed-rail", "train", "metro", "bus-coach", "ferry-boat", "taxi-ride-hailing", "rental-car-driving", "walking", "bicycle", "other"]);
   const DEFAULT_CATEGORIES = Object.freeze([
     ["documents", "Documents"], ["transportation", "Transportation"], ["accommodation", "Accommodation"],
@@ -154,8 +154,99 @@
       days,
       todoCategories: DEFAULT_CATEGORIES.map(([id, name]) => ({ id, name })),
       connections: [],
+      inspirations: [],
       updatedAt: new Date().toISOString()
     };
+  }
+
+  function safeInspirationUrl(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "";
+    let url;
+    try { url = new URL(raw); } catch { throw new Error("请填写完整的 http 或 https 链接。"); }
+    if (!["http:", "https:"].includes(url.protocol)) throw new Error("出于安全考虑，种草链接只允许 http 或 https。");
+    return raw;
+  }
+
+  function createInspirationItineraryItem(record, day, now = new Date().toISOString()) {
+    const id = String(record.linkedItineraryItemId || `inspiration-item-${record.id}`);
+    return {
+      id,
+      time: "",
+      endTime: "",
+      text: String(record.title || record.locationName || "旅行灵感"),
+      location: String(record.locationName || ""),
+      note: String(record.note || ""),
+      ...(record.coordinates && Number.isFinite(Number(record.coordinates.lat)) && Number.isFinite(Number(record.coordinates.lng))
+        ? { locationLatitude: Number(record.coordinates.lat), locationLongitude: Number(record.coordinates.lng), coordinateSystem: record.coordinates.system || "WGS84" }
+        : {}),
+      sourceInspirationId: record.id,
+      createdAt: now
+    };
+  }
+
+  function applyInspirationVote(content, inspirationId, travelerId, travelerIds, now = new Date().toISOString()) {
+    const record = content.inspirations.find((item) => item.id === inspirationId);
+    if (!record) throw new Error("找不到这条旅行灵感。");
+    const eligible = new Set((travelerIds || []).map(String));
+    if (!eligible.has(String(travelerId))) throw new Error("请先选择当前旅行中的同行人。");
+    const votes = Array.isArray(record.votes) ? record.votes : [];
+    const hasVote = votes.some((vote) => String(vote.travelerId) === String(travelerId) && vote.value === "yes");
+    record.votes = hasVote
+      ? votes.filter((vote) => String(vote.travelerId) !== String(travelerId))
+      : [...votes.filter((vote) => String(vote.travelerId) !== String(travelerId)), { travelerId: String(travelerId), value: "yes", createdAt: now }];
+    updateInspirationApproval(content, record, eligible, now);
+    return { passed: isInspirationPassed(record, eligible), hasVote: !hasVote };
+  }
+
+  function isInspirationPassed(record, travelerIds) {
+    const eligible = new Set([...(travelerIds || [])].map(String));
+    if (!eligible.size) return false;
+    const yes = new Set((record?.votes || []).filter((vote) => vote?.value === "yes" && eligible.has(String(vote.travelerId))).map((vote) => String(vote.travelerId)));
+    return yes.size > eligible.size / 2;
+  }
+
+  function updateInspirationApproval(content, record, travelerIds, now = new Date().toISOString()) {
+    const passed = isInspirationPassed(record, travelerIds);
+    if (!passed) {
+      if (!record.linkedItineraryItemId) record.status = "below_threshold";
+      else record.status = "below_threshold_linked";
+      return false;
+    }
+    if (record.linkedItineraryItemId) {
+      record.status = "approved_added";
+      return false;
+    }
+    const target = content.days.find((day) => (record.targetDay && day.id === record.targetDay) || (!record.targetDay && record.targetDate && day.date === record.targetDate));
+    if (!target) { record.status = "approved_pending_day"; return false; }
+    const alreadyAdded = content.days.some((day) => (day.schedule || []).some((item) => item.sourceInspirationId === record.id));
+    if (alreadyAdded) {
+      const linked = content.days.flatMap((day) => day.schedule || []).find((item) => item.sourceInspirationId === record.id);
+      record.linkedItineraryItemId = linked?.id || `inspiration-item-${record.id}`;
+      record.status = "approved_added";
+      return false;
+    }
+    const item = createInspirationItineraryItem(record, target, now);
+    target.schedule = Array.isArray(target.schedule) ? target.schedule : [];
+    target.schedule.push(item);
+    record.linkedItineraryItemId = item.id;
+    record.status = "approved_added";
+    return true;
+  }
+
+  function manuallyAddInspiration(content, inspirationId, dayId, now = new Date().toISOString()) {
+    const record = content.inspirations.find((item) => item.id === inspirationId);
+    const day = content.days.find((item) => item.id === dayId);
+    if (!record || !day) throw new Error("请选择有效的灵感记录和旅行日期。");
+    if (record.linkedItineraryItemId || content.days.some((item) => (item.schedule || []).some((entry) => entry.sourceInspirationId === record.id))) return false;
+    const itineraryItem = createInspirationItineraryItem(record, day, now);
+    day.schedule = Array.isArray(day.schedule) ? day.schedule : [];
+    day.schedule.push(itineraryItem);
+    record.targetDay = day.id;
+    record.targetDate = day.date || "";
+    record.linkedItineraryItemId = itineraryItem.id;
+    record.status = "manual_added";
+    return true;
   }
 
   function normalizeTodos(todos, categories) {
@@ -210,6 +301,22 @@
       throw new Error("To Do 分类名称不能为空。");
     }
     if (content.transportRecords.some((record) => !TRANSPORT_TYPES.includes(record.type))) throw new Error("交通方式无效。");
+    for (const record of content.inspirations) {
+      if (typeof record.title !== "string" || !record.title.trim()) throw new Error("种草记录标题不能为空。");
+      if (typeof record.sourceUrl !== "string") throw new Error("种草记录链接格式无效。");
+      if (record.sourceUrl) safeInspirationUrl(record.sourceUrl);
+      if (record.votes !== undefined && !Array.isArray(record.votes)) throw new Error("种草投票必须是列表。");
+      const voted = new Set();
+      for (const vote of record.votes || []) {
+        if (!vote || typeof vote.travelerId !== "string" || !vote.travelerId.trim() || vote.value !== "yes" || voted.has(vote.travelerId)) throw new Error("种草记录中有无效或重复的投票。");
+        voted.add(vote.travelerId);
+      }
+      if (record.coordinates !== undefined && record.coordinates !== null) {
+        const lat = Number(record.coordinates.lat); const lng = Number(record.coordinates.lng);
+        if (!Number.isFinite(lat) || Math.abs(lat) > 90 || !Number.isFinite(lng) || Math.abs(lng) > 180) throw new Error("种草地点坐标无效。");
+      }
+      if (record.status !== undefined && !["below_threshold", "below_threshold_linked", "approved_pending_day", "approved_added", "manual_added", "linked_existing"].includes(record.status)) throw new Error("种草记录状态无效。");
+    }
     const allScheduleIds = new Set();
     for (const day of content.days) {
       if (!Array.isArray(day.schedule)) throw new Error("每日行程安排必须是列表。");
@@ -259,6 +366,7 @@
       try { parsed = JSON.parse(serialized); }
       catch { throw new Error("本地旅行资料无法解析；为保护数据，未覆盖原内容。"); }
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && parsed.version === VERSION && parsed.connections === undefined) parsed.connections = [];
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && parsed.version === VERSION && parsed.inspirations === undefined) parsed.inspirations = [];
       if (parsed && typeof parsed === "object" && (!parsed.metadata || typeof parsed.metadata !== "object" || typeof parsed.metadata.title !== "string")) parsed.metadata = { ...(parsed.metadata && typeof parsed.metadata === "object" ? parsed.metadata : {}), title: String(data?.metadata?.title || "") };
       if (parsed.metadata.startDate === undefined) parsed.metadata.startDate = String(data?.trip?.startDate || "");
       if (parsed.metadata.endDate === undefined) parsed.metadata.endDate = String(data?.trip?.endDate || "");
@@ -297,6 +405,7 @@
       revision = result.revision;
       const content = result.content || createInitialContent(data);
       if (content && typeof content === "object" && content.version === VERSION && content.connections === undefined) content.connections = [];
+      if (content && typeof content === "object" && content.version === VERSION && content.inspirations === undefined) content.inspirations = [];
       if (!content.tripId) content.tripId = id;
       if (!content.metadata || typeof content.metadata !== "object" || typeof content.metadata.title !== "string") content.metadata = { ...(content.metadata && typeof content.metadata === "object" ? content.metadata : {}), title: String(data?.metadata?.title || "") };
       if (content.metadata.startDate === undefined) content.metadata.startDate = String(data?.trip?.startDate || "");
@@ -323,7 +432,7 @@
     return Object.freeze({ tripId: id, mode: "d1", load, save, getRevision: () => revision });
   }
 
-  const api = Object.freeze({ VERSION, COLLECTIONS, TRANSPORT_TYPES, DEFAULT_CATEGORIES, createStore, createCloudStore, createInitialContent, normalizeTransportType, normalizeJourneyRole, journeyRoleFor, normalizePassengerJourneys, passengerJourneyAttachmentKey, normalizeTodos, moveTasksBeforeCategoryDelete, validate, keyFor });
+  const api = Object.freeze({ VERSION, COLLECTIONS, TRANSPORT_TYPES, DEFAULT_CATEGORIES, createStore, createCloudStore, createInitialContent, normalizeTransportType, normalizeJourneyRole, journeyRoleFor, normalizePassengerJourneys, passengerJourneyAttachmentKey, normalizeTodos, moveTasksBeforeCategoryDelete, safeInspirationUrl, isInspirationPassed, applyInspirationVote, updateInspirationApproval, manuallyAddInspiration, validate, keyFor });
   if (typeof window !== "undefined") window.TravelContentStore = api;
   if (typeof module === "object" && module.exports) module.exports = api;
 })();

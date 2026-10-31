@@ -14,7 +14,7 @@ test("add traveler button reaches the delegated click handler and opens the memb
   assert.match(ledgerSource, /ledgerRoot\.addEventListener\("click", handleRootClick\)/);
   assert.match(ledgerSource, /if \(action === "open-members"\)[\s\S]*?showDialog\("members"\)/);
   assert.match(ledgerSource, /catch \(error\) \{[\s\S]*?dialog\.setAttribute\("open", ""\)/);
-  assert.match(html, /ledger\.js\?v=20261031-phase5-currency-1/);
+  assert.match(html, /ledger\.js\?v=20261031-phase7-1/);
 });
 
 test("one ledger traveler ID is reused in transport passenger journey selectors", () => {
@@ -22,12 +22,15 @@ test("one ledger traveler ID is reused in transport passenger journey selectors"
   assert.match(editorSource, /option value="\$\{esc\(person\.id\)\}"/);
   assert.match(ledgerSource, /next\.travelers\.push\(traveler\)/);
   assert.match(ledgerSource, /window\.dispatchEvent\(new CustomEvent\("travel-ledger:travelers-changed"/);
-  assert.match(editorSource, /window\.addEventListener\("travel-ledger:travelers-changed", refreshTravelerSelectors\)/);
+  assert.match(editorSource, /window\.addEventListener\("travel-ledger:travelers-changed", \(event\) => \{[\s\S]*?refreshTravelerSelectors\(event\)/);
+  assert.match(editorSource, /refreshInspirationApprovals\(\)/);
 });
 
-test("traveler deletion is blocked while a transport journey or AA bill refers to the ID", () => {
+test("traveler deletion is blocked while transport, AA bills or inspiration votes refer to the ID", () => {
   assert.match(ledgerSource, /bill\.payerId === id \|\| bill\.participantIds\.includes\(id\)/);
   assert.match(ledgerSource, /journey\.travelerIds \|\| \[\]/);
+  assert.match(ledgerSource, /content\?\.inspirations \|\| \[\]/);
+  assert.match(ledgerSource, /种草投票/);
   assert.match(ledgerSource, /为保护现有记录，不能删除/);
 });
 

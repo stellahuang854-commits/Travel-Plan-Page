@@ -1897,8 +1897,9 @@
     const referencedByJourney = (content?.transportRecords || []).some((record) =>
       (record.passengerJourneys || []).some((journey) => (journey.travelerIds || []).map(String).includes(id))
     );
-    if (referencedByBill || referencedByJourney) {
-      const references = [referencedByJourney && "交通班次", referencedByBill && "AA 账单"].filter(Boolean).join("和");
+    const referencedByInspiration = (content?.inspirations || []).some((record) => (record.votes || []).some((vote) => String(vote.travelerId) === id));
+    if (referencedByBill || referencedByJourney || referencedByInspiration) {
+      const references = [referencedByJourney && "交通班次", referencedByBill && "AA 账单", referencedByInspiration && "种草投票"].filter(Boolean).join("、");
       setNotice(`${traveler.name}已关联${references}，为保护现有记录，不能删除。请先编辑这些引用。`);
       return;
     }

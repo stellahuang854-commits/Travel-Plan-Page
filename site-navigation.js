@@ -1,11 +1,12 @@
 (() => {
   const TRAVEL_HASHES = new Set(["", "#top", "#flights", "#route", "#itinerary", "#drive", "#prep"]);
   const isLedgerHash = (hash) => hash === "#ledger" || hash.startsWith("#ledger-");
+  const isInspirationHash = (hash) => hash === "#inspiration" || hash.startsWith("#inspiration?");
   const ledgerEnabled = () => !document.querySelector("#ledger-navigation-link")?.hidden;
-  const viewForHash = (hash) => isLedgerHash(hash) && ledgerEnabled() ? "ledger" : "travel";
+  const viewForHash = (hash) => isInspirationHash(hash) ? "inspiration" : isLedgerHash(hash) && ledgerEnabled() ? "ledger" : "travel";
 
   let activeView = "travel";
-  const scrollPositions = { travel: 0, ledger: 0 };
+  const scrollPositions = { travel: 0, ledger: 0, inspiration: 0 };
   let scrollFrame = 0;
   let browserRouteFrame = 0;
   let pendingBrowserRestore = false;
@@ -14,36 +15,45 @@
     return {
       travelView: document.querySelector('[data-site-view="travel"]'),
       ledgerView: document.querySelector('[data-site-view="ledger"]'),
+      inspirationView: document.querySelector('[data-site-view="inspiration"]'),
       travelMenu: document.querySelector("#travel-navigation"),
       travelTrigger: document.querySelector("#travel-navigation-trigger"),
       ledgerLink: document.querySelector("#ledger-navigation-link"),
+      inspirationLink: document.querySelector("#inspiration-navigation-link"),
       skipLink: document.querySelector("#skip-link")
     };
   }
 
   function setVisibleView(nextView, options = {}) {
-    const { travelView, ledgerView, travelTrigger, ledgerLink, skipLink } = elements();
-    if (!travelView || !ledgerView) return;
+    const { travelView, ledgerView, inspirationView, travelTrigger, ledgerLink, inspirationLink, skipLink } = elements();
+    if (!travelView || !ledgerView || !inspirationView) return;
 
     const viewChanged = activeView !== nextView;
     if (viewChanged) scrollPositions[activeView] = window.scrollY;
     activeView = nextView;
     const ledgerActive = nextView === "ledger";
+    const inspirationActive = nextView === "inspiration";
 
-    travelView.hidden = ledgerActive;
+    travelView.hidden = ledgerActive || inspirationActive;
     ledgerView.hidden = !ledgerActive;
-    travelView.toggleAttribute("inert", ledgerActive);
+    inspirationView.hidden = !inspirationActive;
+    travelView.toggleAttribute("inert", ledgerActive || inspirationActive);
     ledgerView.toggleAttribute("inert", !ledgerActive);
+    inspirationView.toggleAttribute("inert", !inspirationActive);
     document.body.dataset.activeView = nextView;
     if (travelTrigger) {
-      if (ledgerActive) travelTrigger.removeAttribute("aria-current");
+      if (nextView !== "travel") travelTrigger.removeAttribute("aria-current");
       else travelTrigger.setAttribute("aria-current", "page");
     }
     if (ledgerLink) {
       if (ledgerActive) ledgerLink.setAttribute("aria-current", "page");
       else ledgerLink.removeAttribute("aria-current");
     }
-    if (skipLink) skipLink.href = ledgerActive ? "#ledger-root" : "#main";
+    if (inspirationLink) {
+      if (inspirationActive) inspirationLink.setAttribute("aria-current", "page");
+      else inspirationLink.removeAttribute("aria-current");
+    }
+    if (skipLink) skipLink.href = ledgerActive ? "#ledger-root" : inspirationActive ? "#inspiration-root" : "#main";
 
     if (ledgerActive) {
       const tab = location.hash === "#ledger-stats" ? "stats" : location.hash === "#ledger" ? "entry" : "";
@@ -53,7 +63,7 @@
     cancelAnimationFrame(scrollFrame);
     scrollFrame = requestAnimationFrame(() => {
       scrollFrame = 0;
-      if (!ledgerActive && viewChanged) window.dispatchEvent(new Event("travel-view:shown"));
+      if (nextView === "travel" && viewChanged) window.dispatchEvent(new Event("travel-view:shown"));
       if (options.targetId && nextView === "travel") {
         document.getElementById(options.targetId)?.scrollIntoView({ block: "start" });
       } else if ((viewChanged || options.forceScroll) && options.restore) {
@@ -100,6 +110,13 @@
     routeFromLocation({ restore: false, forceScroll: true });
 
     document.addEventListener("click", (event) => {
+      const inspirationLink = event.target.closest("#inspiration-navigation-link");
+      if (inspirationLink) {
+        event.preventDefault();
+        navigate("#inspiration");
+        return;
+      }
+
       const ledgerLink = event.target.closest("#ledger-navigation-link");
       if (ledgerLink) {
         event.preventDefault();

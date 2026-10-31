@@ -29,10 +29,25 @@ test("homepage overview and each Day route derive their visible content from sav
   assert.match(app, /day\.locations \|\| \[\]/);
   assert.match(app, /item\.date === routeKey/);
   assert.match(app, /item\.id === routeKey\.slice\(3\)/);
-  assert.match(app, /TravelRouteUI\?\.renderDayMap\?\.\(day\.day\)/);
+  assert.match(app, /TravelRouteUI\?\.renderItineraryDayMap\?\.\(day\)/);
+  assert.match(app, /DAY \$\{String\(day\.day \|\| 1\)\.padStart\(2, "0"\)\}/);
+  assert.match(app, /day\.city \|\| day\.region \|\| day\.cityOrArea \|\| places\[0\] \|\| day\.title/);
   assert.match(app, /function renderDayOverviewCard\(/);
   assert.match(app, /function renderTripOverview\(/);
   assert.match(app, /TravelContentEditor\?\.openDay\?\.\(day\.id\)/);
+});
+
+test("Day page has its own readable Day Tag, interactive map controls and per-location inspiration links", () => {
+  const html = fs.readFileSync(path.resolve(__dirname, "../../index.html"), "utf8");
+  const routeUi = fs.readFileSync(path.resolve(__dirname, "../../route-ui.js"), "utf8");
+  assert.match(html, /class="day-page-tag"/);
+  assert.match(html, /id="day-page-kicker"/);
+  assert.match(html, /id="day-page-title"/);
+  assert.match(routeUi, /data-day-map-zoom="in"/);
+  assert.match(routeUi, /data-day-map-zoom="out"/);
+  assert.match(routeUi, /pointermove/);
+  assert.match(app, /href="#inspiration\?item=/);
+  assert.match(app, /打开地图|查看 \$\{escapeHtml\(destination\.label\)\} 的地图/);
 });
 
 test("daily map filtering includes only locations named by that day's itinerary", () => {

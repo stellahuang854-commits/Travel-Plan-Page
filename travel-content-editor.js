@@ -696,7 +696,10 @@
 
   async function init(options) {
     context = options;
-    window.addEventListener("travel-ledger:travelers-changed", refreshTravelerSelectors);
+    window.addEventListener("travel-ledger:travelers-changed", (event) => {
+      refreshTravelerSelectors(event);
+      if (String(event?.detail?.tripId || "") === String(context?.data?.metadata?.tripId || "")) void refreshInspirationApprovals();
+    });
     store = options.cloudStorage
       ? window.TravelContentStore.createCloudStore(options.data.metadata.tripId, options.data.config.persistence.apiBase || "/api/trip")
       : window.TravelContentStore.createStore(options.data.metadata.tripId);
@@ -778,5 +781,57 @@
     return commit((next) => { next.connections = next.connections.filter((item) => item.fromItemId !== itemId && item.toItemId !== itemId); }, "关联交通衔接已清理。");
   }
 
-  window.TravelContentEditor = Object.freeze({ init, openTab, openDay, openDayItem, openTransportForRole, getContent, getCategories: () => copy(content?.todoCategories || []), transportsForDay, getSourceDetails, saveSourceDetails, saveConnection, deleteConnection, removeConnectionsForItem });
+  async function saveInspiration(value) {
+    const url = window.TravelContentStore.safeInspirationUrl(value?.sourceUrl || "");
+    const id = String(value?.id || idFor("inspiration"));
+    const record = {
+      ...(content.inspirations.find((item) => item.id === id) || {}),
+      ...copy(value || {}), id, sourceUrl: url,
+      title: String(value?.title || "").trim(),
+      locationName: String(value?.locationName || "").trim(),
+      votes: Array.isArray(value?.votes) ? copy(value.votes) : (content.inspirations.find((item) => item.id === id)?.votes || []),
+      createdAt: content.inspirations.find((item) => item.id === id)?.createdAt || value?.createdAt || new Date().toISOString()
+    };
+    return commit((next) => {
+      if (!record.title) throw new Error("请填写种草标题。");
+      const index = next.inspirations.findIndex((item) => item.id === id);
+      if (index >= 0) next.inspirations[index] = record;
+      else next.inspirations.unshift(record);
+    }, "种草记录已保存。");
+  }
+
+  async function voteInspiration(inspirationId, travelerId) {
+    const travelers = window.TravelLedger?.getSnapshot?.()?.travelers || [];
+    let outcome = null;
+    const ok = await commit((next) => {
+      outcome = window.TravelContentStore.applyInspirationVote(next, String(inspirationId), String(travelerId), travelers.map((person) => person.id));
+    }, "投票已更新。");
+    return ok ? outcome : null;
+  }
+
+  async function addInspirationToDay(inspirationId, dayId) {
+    let added = false;
+    const ok = await commit((next) => { added = window.TravelContentStore.manuallyAddInspiration(next, String(inspirationId), String(dayId)); }, "灵感已加入当天行程。");
+    return ok ? added : false;
+  }
+
+  async function deleteInspiration(inspirationId) {
+    const record = content.inspirations.find((item) => item.id === String(inspirationId));
+    if (!record) return false;
+    const message = record.linkedItineraryItemId
+      ? "这条灵感已经关联行程。删除灵感只会删除原帖记录，保留用户可能已修改过的行程安排。确定继续吗？"
+      : "确定删除这条旅行灵感吗？";
+    if (!window.confirm(message)) return false;
+    return commit((next) => { next.inspirations = next.inspirations.filter((item) => item.id !== record.id); }, "种草记录已删除；已有行程安排已保留。");
+  }
+
+  async function refreshInspirationApprovals() {
+    if (!content?.inspirations?.length) return true;
+    const travelers = window.TravelLedger?.getSnapshot?.()?.travelers || [];
+    return commit((next) => {
+      next.inspirations.forEach((record) => window.TravelContentStore.updateInspirationApproval(next, record, travelers.map((person) => person.id)));
+    }, "同行人变更后已更新种草投票状态。");
+  }
+
+  window.TravelContentEditor = Object.freeze({ init, openTab, openDay, openDayItem, openTransportForRole, getContent, getCategories: () => copy(content?.todoCategories || []), transportsForDay, getSourceDetails, saveSourceDetails, saveConnection, deleteConnection, removeConnectionsForItem, saveInspiration, voteInspiration, addInspirationToDay, deleteInspiration, refreshInspirationApprovals });
 })();

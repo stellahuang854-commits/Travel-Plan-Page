@@ -536,8 +536,8 @@ function setupTransportDetailDialog() {
     const flightSource = Boolean(journey || record.sourceType === "flight" || record.type === "flight");
     const sourceType = flightSource ? "journey" : "record";
     const sourceId = journey?.id || record.id;
-    const transportId = journey ? `flight-journey:${journey.id}` : record.id;
-    openTransportDetail({ transportId, sourceType, sourceId, type: record.type, title: record.title || record.type, transport: record, journey });
+    const transportId = journey ? `flight-journey:${journey.id}` : record.transportId || record.id;
+    openTransportDetail({ transportId, sourceType, sourceId, type: record.type, title: record.title || record.type, transport: record, journey, attachmentOnly: Boolean(record.attachmentOnly) });
   });
   dialog.addEventListener("click", async (event) => {
     if (event.target === dialog) { close(); return; }
@@ -857,6 +857,13 @@ function dayCard(day) {
   const items = day.schedule || [];
   const schedule = items.map((item, itemIndex) => {
     const destinations = navigationDestinations(item);
+    const linkedInspirations = (window.TravelContentEditor?.getContent?.()?.inspirations || []).filter((record) => record.linkedItineraryItemId === item.id || item.sourceInspirationId === record.id);
+    const inspirationLinks = linkedInspirations.length
+      ? [...new Set(linkedInspirations.map((record) => String(record.sourcePlatform || "Other")))].map((platform) => {
+        const count = linkedInspirations.filter((record) => String(record.sourcePlatform || "Other") === platform).length;
+        return `<a class="schedule-map-link" href="#inspiration?item=${encodeURIComponent(linkedInspirations.find((record) => String(record.sourcePlatform || "Other") === platform).id)}">${escapeHtml(platform)} ${count > 1 ? `×${count}` : ""} · 种草</a>`;
+      }).join("")
+      : `<a class="schedule-map-link" href="#inspiration?location=${encodeURIComponent(item.location || item.placeName || item.text || "")}&amp;item=${encodeURIComponent(item.id)}">＋ 添加种草</a>`;
     const mapLinks = destinations.map((destination) => `
       <button type="button" class="schedule-map-link" data-map-query="${escapeHtml(destination.query)}" data-map-url="${escapeHtml(destination.url || "")}" data-map-provider="${escapeHtml(destination.provider || "google")}" data-map-label="${escapeHtml(destination.label)}" aria-haspopup="dialog" aria-controls="place-map" aria-label="查看 ${escapeHtml(destination.label)} 的地图">📍 ${escapeHtml(destination.label)} · ${escapeHtml(window.TravelPhase3?.PROVIDERS?.[destination.provider || "google"] || "Google Maps")}</button>
     `).join("");
@@ -871,6 +878,7 @@ function dayCard(day) {
           ${(item.documentUrls || []).map((entry) => { const url = safeExternalUrl(typeof entry === "string" ? entry : entry.url); return url ? `<a class="schedule-map-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">查看相关文件 ↗</a>` : ""; }).join("")}
           <button type="button" class="schedule-map-link" data-schedule-attachments="${escapeHtml(item.id)}" data-day-id="${escapeHtml(day.id)}" aria-haspopup="dialog" aria-controls="transport-detail-dialog">附件 / 预约凭证</button>
           <button type="button" class="schedule-map-link" data-edit-day-item="${escapeHtml(day.id)}" data-item-id="${escapeHtml(item.id)}">编辑安排</button>
+          <div class="schedule-map-links">${inspirationLinks}</div>
           ${scheduleTickets}
           ${mapLinks ? `<div class="schedule-map-links">${mapLinks}</div>` : ""}
         </div>
@@ -986,10 +994,12 @@ function navigationDestinations(item) {
       ? [...catalogPlaces, ...restaurants]
       : [...selectedExplicit, ...restaurants];
   destinations = destinations.filter((place, index, all) => all.findIndex((candidate) => candidate.id === place.id) === index);
-  if (!destinations.length && item.location) {
+  if (!destinations.length && (item.location || item.placeName || item.locationLatitude !== undefined || item.latitude !== undefined)) {
     const place = scheduleLocation(item);
     const provider = item.mapProvider || "google";
-    destinations = [{ id: item.id || item.location, label: item.location, query: item.location, provider, url: window.TravelPhase3?.placeUrl(provider, { label: item.location, query: item.location, coordinates: place.coordinates }) || "", matchIndex: 0 }];
+    const label = place.label || "已填写坐标";
+    const query = place.label || (place.coordinates ? `${place.coordinates.lat},${place.coordinates.lng}` : label);
+    destinations = [{ id: item.id || label, label, query, provider, url: window.TravelPhase3?.placeUrl(provider, { label, query, coordinates: place.coordinates }) || "", matchIndex: 0 }];
   }
 
   if (policy.selfNavigationTypes.includes(item.type) && destinations.length > 1 && !specificExplicit.length) {
@@ -1112,13 +1122,15 @@ function renderPageRoute() {
     return;
   }
   $("#day-page-kicker").textContent = `DAY ${String(day.day || 1).padStart(2, "0")}`;
-  $("#day-page-title").textContent = displayTripDate(day.date);
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(day.date || "")) ? new Date(`${day.date}T12:00:00`) : null;
+  const dateLabel = date ? `${String(date.getMonth() + 1).padStart(2, "0")}.${String(date.getDate()).padStart(2, "0")} ${new Intl.DateTimeFormat("en", { weekday: "short" }).format(date).toUpperCase()}` : "日期待补充";
+  $("#day-page-title").textContent = dateLabel;
   const places = [...new Set([...(day.locations || []), ...(day.schedule || []).map((item) => item.location || item.placeName).filter(Boolean)])];
-  $("#day-page-location").textContent = places.join(" → ") || "当天地点尚未添加";
+  $("#day-page-location").textContent = String(day.city || day.region || day.cityOrArea || places[0] || day.title || "当天地区待补充");
   state.expandedDay = Number(day.day);
   $("#day-timeline").innerHTML = dayCard(day);
-  const map = window.TravelRouteUI?.renderDayMap?.(day.day);
-  $("#day-route-map").innerHTML = map || `<p class="trip-overview-empty">此日还没有可显示的地图路线或已确认坐标。</p>`;
+  const map = window.TravelRouteUI?.renderItineraryDayMap?.(day);
+  $("#day-route-map").innerHTML = map || `<div class="trip-overview-empty day-map-empty"><strong>当天地点尚无可用坐标</strong><p>地图只会绘制已填写或关联地点目录的真实坐标，不会推测位置。</p><button type="button" id="day-map-edit">补充地点 / 坐标</button></div>`;
   window.TravelRouteUI?.activateDayMap?.($("#day-route-map"));
 }
 
@@ -1609,6 +1621,7 @@ async function init() {
           renderTripOverview();
           renderPageRoute();
           renderTravelContentDisplay();
+          window.TravelInspiration?.render?.();
         }
       });
       setupTransportDetailDialog();
@@ -1643,6 +1656,13 @@ async function init() {
       const day = match && state.data.days.find((item) => routeKey.startsWith("id=") ? item.id === routeKey.slice(3) : item.date === routeKey);
       if (day) window.TravelContentEditor?.openDayItem?.(day.id);
     });
+    $("#day-route-map")?.addEventListener("click", (event) => {
+      if (!event.target.closest("#day-map-edit")) return;
+      const match = location.hash.match(/^#day\/(.+)$/);
+      const routeKey = match ? decodeURIComponent(match[1]) : "";
+      const day = match && state.data.days.find((item) => routeKey.startsWith("id=") ? item.id === routeKey.slice(3) : item.date === routeKey);
+      if (day) window.TravelContentEditor?.openDay?.(day.id);
+    });
     if (moduleEnabled("driving")) renderRental();
     if (moduleEnabled("todo")) renderTravelPrep();
     if (moduleEnabled("ledger")) {
@@ -1652,6 +1672,12 @@ async function init() {
       await window.TravelLedger?.init?.({ tripId: state.data.metadata.tripId, config: state.config, persistence });
       $("#ledger-root")?.addEventListener("travel-ledger:changed", () => { renderFlights(); renderTravelContentDisplay(); });
     }
+    window.TravelInspiration?.init?.({
+      tripId: state.data.metadata.tripId,
+      getContent: () => window.TravelContentEditor?.getContent?.() || {},
+      editor: window.TravelContentEditor,
+      mapProvider: state.data.mapLinks?.preferredProvider || state.data.mapLinks?.defaultProvider || "google"
+    });
     renderFlights();
     renderTravelContentDisplay();
     startCountdowns();

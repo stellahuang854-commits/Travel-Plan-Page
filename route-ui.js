@@ -265,6 +265,63 @@ function setupRouteExplorer() {
 
 window.TravelRouteUI = Object.freeze({
   itineraryMapPlaceIds,
+  dayMapPoints(day, data = state.data) {
+    const places = Array.isArray(data?.places) ? data.places : [];
+    return (day?.schedule || []).map((item, index) => {
+      const place = places.find((entry) => entry.id === item.placeId);
+      const geo = place?.geo || {};
+      const rawLat = String(item.locationLatitude ?? "").trim() ? item.locationLatitude : item.latitude ?? geo.lat;
+      const rawLng = String(item.locationLongitude ?? "").trim() ? item.locationLongitude : item.longitude ?? geo.lng;
+      const lat = rawLat === "" || rawLat === undefined || rawLat === null ? NaN : Number(rawLat);
+      const lng = rawLng === "" || rawLng === undefined || rawLng === null ? NaN : Number(rawLng);
+      if (!Number.isFinite(lat) || Math.abs(lat) > 90 || !Number.isFinite(lng) || Math.abs(lng) > 180) return null;
+      const label = String(item.location || item.placeName || place?.nameZh || place?.name || item.text || item.title || "").trim();
+      return label ? { id: String(item.id || `day-${day.id}-${index + 1}`), label, lat, lng, coordinateSystem: item.coordinateSystem || geo.system || "", number: index + 1, time: item.time || "" } : null;
+    }).filter(Boolean).map((point, index) => ({ ...point, number: index + 1 }));
+  },
+  renderItineraryDayMap(day) {
+    const points = this.dayMapPoints(day);
+    if (!points.length) return "";
+    const width = 720; const height = 380; const padX = 58; const padY = 52;
+    const meanLat = points.reduce((total, point) => total + point.lat, 0) / points.length;
+    const projected = points.map((point) => ({ ...point, xGeo: point.lng * Math.cos(meanLat * Math.PI / 180), yGeo: -point.lat }));
+    const minX = Math.min(...projected.map((point) => point.xGeo)); const maxX = Math.max(...projected.map((point) => point.xGeo));
+    const minY = Math.min(...projected.map((point) => point.yGeo)); const maxY = Math.max(...projected.map((point) => point.yGeo));
+    const spanX = Math.max(maxX - minX, 0.0001); const spanY = Math.max(maxY - minY, 0.0001);
+    const scale = Math.min((width - padX * 2) / spanX, (height - padY * 2) / spanY);
+    const plotted = projected.map((point) => ({ ...point, x: width / 2 + (point.xGeo - (minX + maxX) / 2) * scale, y: height / 2 + (point.yGeo - (minY + maxY) / 2) * scale }));
+    const line = plotted.map((point) => `${point.x},${point.y}`).join(" ");
+    const markers = plotted.map((point, index) => `<g class="day-map-marker" tabindex="0" role="button" aria-label="第 ${index + 1} 站：${escapeHtml(point.label)}" data-day-map-marker="${index}"><circle cx="${point.x}" cy="${point.y}" r="19"></circle><text x="${point.x}" y="${point.y + 5}">${index + 1}</text></g>`).join("");
+    const stops = plotted.map((point) => `<li><span>${point.number}</span><strong>${escapeHtml(point.label)}</strong>${point.time ? `<small>${escapeHtml(point.time)}</small>` : ""}</li>`).join("");
+    return `<div class="itinerary-map" data-map-day="${escapeHtml(day.id)}" data-map-count="${plotted.length}">
+      <div class="itinerary-map__toolbar"><span>${plotted.length} 个已填写坐标的行程地点</span><div><button type="button" data-day-map-zoom="out" aria-label="缩小地图">−</button><button type="button" data-day-map-zoom="reset">适配</button><button type="button" data-day-map-zoom="in" aria-label="放大地图">＋</button></div></div>
+      <div class="itinerary-map__viewport" data-day-map-viewport><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="当天实际坐标路线图"><g data-day-map-layer><polyline points="${line}" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="8 8" opacity=".58"></polyline>${markers}</g></svg></div>
+      <div class="itinerary-map__info" data-day-map-info role="status" aria-live="polite">点击数字标记查看地点名称；可拖动地图，路线位置按已填坐标绘制。</div>
+      <ol class="itinerary-map__stops">${stops}</ol>
+    </div>`;
+  },
+  activateItineraryDayMap(root) {
+    if (!root || root.dataset.dayMapBound || !root.querySelector("[data-day-map-layer]") || !root.querySelector("[data-day-map-viewport]")) return;
+    root.dataset.dayMapBound = "true";
+    let zoom = 1; let x = 0; let y = 0; let pointer = null;
+    const apply = () => { root.querySelector("[data-day-map-layer]")?.setAttribute("transform", `translate(${x} ${y}) translate(360 190) scale(${zoom}) translate(-360 -190)`); };
+    root.addEventListener("click", (event) => {
+      const zoomButton = event.target.closest("[data-day-map-zoom]");
+      if (zoomButton) { const kind = zoomButton.dataset.dayMapZoom; zoom = kind === "reset" ? 1 : Math.max(.7, Math.min(3.5, zoom + (kind === "in" ? .25 : -.25))); if (kind === "reset") { x = 0; y = 0; } apply(); return; }
+      const marker = event.target.closest("[data-day-map-marker]");
+      if (marker) {
+        const index = Number(marker.dataset.dayMapMarker); const point = window.TravelRouteUI.dayMapPoints(window.TravelContentEditor?.getContent?.()?.days.find((day) => day.id === root.querySelector(".itinerary-map")?.dataset.mapDay));
+        const selected = point[index];
+        const info = root.querySelector("[data-day-map-info]");
+        if (selected && info) info.textContent = `${selected.number}. ${selected.label}${selected.time ? ` · ${selected.time}` : ""} · 坐标 ${selected.lat.toFixed(5)}, ${selected.lng.toFixed(5)}${selected.coordinateSystem ? ` (${selected.coordinateSystem})` : ""}`;
+      }
+    });
+    root.addEventListener("pointerdown", (event) => { if (!event.target.closest("[data-day-map-viewport]") || event.target.closest("[data-day-map-marker]")) return; pointer = { id: event.pointerId, x: event.clientX, y: event.clientY, originX: x, originY: y }; event.target.closest("[data-day-map-viewport]")?.setPointerCapture?.(event.pointerId); });
+    root.addEventListener("pointermove", (event) => { if (!pointer || pointer.id !== event.pointerId) return; x = pointer.originX + (event.clientX - pointer.x) * .7; y = pointer.originY + (event.clientY - pointer.y) * .7; apply(); });
+    const finish = (event) => { if (pointer?.id === event.pointerId) pointer = null; };
+    root.addEventListener("pointerup", finish); root.addEventListener("pointercancel", finish);
+    root.addEventListener("keydown", (event) => { if (event.key !== "Enter" && event.key !== " ") return; const marker = event.target.closest("[data-day-map-marker]"); if (marker) { event.preventDefault(); marker.dispatchEvent(new MouseEvent("click", { bubbles: true })); } });
+  },
   renderDayMap(dayNumber) {
     const day = state.data?.days?.find((item) => Number(item.day) === Number(dayNumber));
     if (!day) return "";
@@ -281,5 +338,9 @@ window.TravelRouteUI = Object.freeze({
     if (!route) return "";
     return travelMapMarkup(daySource, route);
   },
-  activateDayMap(root) { if (root) activateDayMaps(root); }
+  activateDayMap(root) {
+    if (!root) return;
+    if (root.querySelector(".itinerary-map")) this.activateItineraryDayMap(root);
+    else activateDayMaps(root);
+  }
 });

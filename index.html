@@ -8,22 +8,24 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>AI 旅行网页模板</title>
-  <link rel="stylesheet" href="styles.css?v=20261031-phase6-home-days-1">
+  <link rel="stylesheet" href="styles.css?v=20261031-phase7-1">
   <link rel="stylesheet" href="ledger.css?v=20261030-phase4-6">
-  <script src="travel-content-store.js?v=20261031-phase6-home-days-1" defer></script>
+  <link rel="stylesheet" href="travel-inspiration.css?v=20261031-phase7-1">
+  <script src="travel-content-store.js?v=20261031-phase7-1" defer></script>
   <script src="travel-content-view.js?v=20261031-phase6-home-days-1" defer></script>
   <script src="travel-attachment-store.js?v=20261031-phase5-1" defer></script>
-  <script src="travel-content-editor.js?v=20261031-phase6-home-days-1" defer></script>
+  <script src="travel-content-editor.js?v=20261031-phase7-1" defer></script>
   <script src="travel-phase3-services.js?v=20261030-phase3-2" defer></script>
   <script src="cloud-client.js?v=20261030-phase5-1" defer></script>
   <script src="cloud-migration.js?v=20261030-phase5-1" defer></script>
   <script src="runtime-storage.js?v=20260910-2" defer></script>
   <script src="overview-map.js?v=20260910-2" defer></script>
-  <script src="route-ui.js?v=20261031-phase6-home-days-1" defer></script>
-  <script src="app.js?v=20261031-phase6-home-days-1" defer></script>
+  <script src="route-ui.js?v=20261031-phase7-1" defer></script>
+  <script src="app.js?v=20261031-phase7-1" defer></script>
   <script src="ticket-pdf-preview.js?v=20260910-2" defer></script>
-  <script src="ledger.js?v=20261031-phase5-currency-1" defer></script>
-  <script src="site-navigation.js?v=20260910-2" defer></script>
+  <script src="ledger.js?v=20261031-phase7-1" defer></script>
+  <script src="travel-inspiration.js?v=20261031-phase7-1" defer></script>
+  <script src="site-navigation.js?v=20261031-phase7-1" defer></script>
 </head>
 <body>
   <a class="skip-link" id="skip-link" href="#main">跳到主要内容</a>
@@ -41,6 +43,7 @@
         </div>
       </details>
       <a class="primary-navigation__ledger" id="ledger-navigation-link" href="#ledger" data-module="ledger" hidden>AA / 账本</a>
+      <a class="primary-navigation__inspiration" id="inspiration-navigation-link" href="#inspiration">✦ 种草</a>
     </nav>
   </header>
 
@@ -54,9 +57,11 @@
 
     <section class="day-page section" id="day-page" hidden aria-labelledby="day-page-title">
       <a class="day-page-back" href="#top">← 返回旅行总览</a>
-      <p class="section-kicker" id="day-page-kicker">DAY</p>
-      <h2 id="day-page-title"></h2>
-      <p id="day-page-location"></p>
+      <header class="day-page-tag" aria-label="当天标签">
+        <p class="day-page-tag__index" id="day-page-kicker">DAY</p>
+        <h2 id="day-page-title"></h2>
+        <p class="day-page-tag__place" id="day-page-location"></p>
+      </header>
       <div class="day-page-actions"><button type="button" id="day-page-add">＋ 添加行程</button><button type="button" id="day-page-edit">管理当天行程</button></div>
       <section class="day-page-route" aria-labelledby="day-page-route-title"><h3 id="day-page-route-title">当天路线图</h3><div id="day-route-map"></div></section>
       <section class="day-page-itinerary" aria-labelledby="day-page-itinerary-title"><h3 id="day-page-itinerary-title">当天路线</h3><div class="timeline" id="day-timeline"></div></section>
@@ -152,6 +157,10 @@
 
   <main class="ledger-view" id="ledger-view" data-site-view="ledger" data-module="ledger" hidden>
     <div id="ledger-root"></div>
+  </main>
+
+  <main class="inspiration-view" id="inspiration-view" data-site-view="inspiration" hidden>
+    <div id="inspiration-root"></div>
   </main>
 
   <dialog class="map-dialog" id="map-dialog">
